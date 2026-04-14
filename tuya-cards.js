@@ -92,6 +92,15 @@ class IrrigationControlCard extends HTMLElement {
     this._inputLitri = 0; this._inputMin = 0; this._inputSec = 0;
     this._userEditedLitri = false; this._userEditedTempo = false;
     this._histExpanded = false;
+    this._renderPending = false;
+    this.shadowRoot.addEventListener("focusout", () => {
+      requestAnimationFrame(() => {
+        const ae = this.shadowRoot.activeElement;
+        if (!ae || (ae.tagName !== "INPUT" && ae.tagName !== "SELECT")) {
+          if (this._renderPending) this._render();
+        }
+      });
+    });
   }
 
   static getConfigElement() { return document.createElement("irrigation-control-card-editor"); }
@@ -120,6 +129,8 @@ class IrrigationControlCard extends HTMLElement {
       }
     }
     if (this._timerState === "idle") this._syncFromEntities();
+    const ae = this.shadowRoot.activeElement;
+    if (ae && (ae.tagName === "INPUT" || ae.tagName === "SELECT")) { this._renderPending = true; return; }
     this._render();
   }
 
@@ -233,6 +244,7 @@ class IrrigationControlCard extends HTMLElement {
   }
 
   _render() {
+    this._renderPending = false;
     if (!this._hass || !this._entities) return;
     const e = this._entities;
     const isOn = this._isOn();

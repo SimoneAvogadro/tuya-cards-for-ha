@@ -197,8 +197,8 @@ class IrrigationControlCard extends HTMLElement {
     if (bar) bar.style.width = (this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0) + "%";
   }
 
-  async _toggleSchedule() { const c = this._nv(this._entities.cycles); await this._svc("number", "set_value", { entity_id: this._entities.cycles, value: c === 0 ? 1 : 0 }); }
-  async _adjCycles(d) { const nv = Math.max(1, Math.min(100, this._nv(this._entities.cycles) + d)); await this._svc("number", "set_value", { entity_id: this._entities.cycles, value: nv }); }
+  async _toggleSchedule() { const c = this._nv(this._entities.cycles); await this._svc("number", "set_value", { entity_id: this._entities.cycles, value: c <= 1 ? 2 : 0 }); }
+  async _adjCycles(d) { const nv = Math.max(2, Math.min(100, this._nv(this._entities.cycles) + d)); await this._svc("number", "set_value", { entity_id: this._entities.cycles, value: nv }); }
   async _setIv() {
     const hh = parseInt(this.shadowRoot.getElementById("iv-hh")?.value) || 0;
     const mm = parseInt(this.shadowRoot.getElementById("iv-mm")?.value) || 0;
@@ -238,7 +238,7 @@ class IrrigationControlCard extends HTMLElement {
     const isOn = this._isOn();
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
-    const cyc = this._nv(e.cycles); const schedOn = cyc > 0;
+    const cyc = this._nv(e.cycles); const schedOn = cyc > 1;
     const ivS = this._nv(e.interval);
     const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
     const dur = this._nv(e.last_duration);

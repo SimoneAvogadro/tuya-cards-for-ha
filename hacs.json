@@ -1,0 +1,6 @@
+{
+  "name": "Tuya Cards for HA",
+  "render_readme": true,
+  "filename": "tuya-cards.js",
+  "content_in_root": true
+}

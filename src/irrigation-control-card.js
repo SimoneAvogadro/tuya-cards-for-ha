@@ -1,0 +1,427 @@
+/**
+ * Irrigation Control Card for Home Assistant
+ * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v1.6.0 — Collapsible start/end, local TZ
+ */
+
+const SUFFIXES = {
+  mode:          { domain: "select", suffix: "_irrigation_mode" },
+  target:        { domain: "number", suffix: "_irrigation_target" },
+  cycles:        { domain: "number", suffix: "_irrigation_cycles" },
+  interval:      { domain: "number", suffix: "_irrigation_interval" },
+  last_duration: { domain: "sensor", suffix: "_last_irrigation_duration" },
+  summation:     { domain: "sensor", suffix: "_summation_delivered" },
+  battery:       { domain: "sensor", suffix: "_battery" },
+  start_time:    { domain: "sensor", suffix: "_irrigation_start_time" },
+  end_time:      { domain: "sensor", suffix: "_irrigation_end_time" },
+};
+const REQUIRED = ["mode", "target", "cycles", "interval", "last_duration", "summation"];
+
+function buildEntities(sw) {
+  const p = sw.replace("switch.", "");
+  const e = { switch: sw };
+  for (const [k, d] of Object.entries(SUFFIXES)) e[k] = `${d.domain}.${p}${d.suffix}`;
+  return e;
+}
+function isCompatible(sw, hass) {
+  const p = sw.replace("switch.", "");
+  return REQUIRED.every(k => { const d = SUFFIXES[k]; return hass.states[`${d.domain}.${p}${d.suffix}`] !== undefined; });
+}
+function findCompatible(hass) {
+  return Object.keys(hass.states).filter(e => e.startsWith("switch.")).filter(e => isCompatible(e, hass));
+}
+
+// ── Editor ──
+class IrrigationControlCardEditor extends HTMLElement {
+  constructor() { super(); this.attachShadow({ mode: "open" }); this._config = {}; this._hass = null; }
+  set hass(h) { this._hass = h; this._render(); }
+  setConfig(c) { this._config = { ...c }; this._render(); }
+  _render() {
+    if (!this._hass) return;
+    const compat = findCompatible(this._hass);
+    const cur = this._config.switch || "";
+    const nm = this._config.name || "";
+    this.shadowRoot.innerHTML = `
+<style>
+.editor{padding:16px;font-family:var(--paper-font-body1_-_font-family,sans-serif)}
+.row{margin-bottom:16px}
+label{display:block;font-size:12px;font-weight:500;color:var(--secondary-text-color);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+select,input[type="text"]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--divider-color,rgba(255,255,255,.06));background:var(--card-background-color,#232640);color:var(--primary-text-color);font-size:14px;font-family:monospace;outline:none;box-sizing:border-box}
+select:focus,input:focus{border-color:#4a90d9}
+.hint{font-size:11px;color:var(--disabled-text-color,#5c5e76);margin-top:4px}
+.empty{font-size:13px;color:var(--disabled-text-color);padding:12px;text-align:center;background:var(--divider-color,rgba(255,255,255,.06));border-radius:8px}
+</style>
+<div class="editor">
+  <div class="row">
+    <label>Dispositivo irrigazione</label>
+    ${compat.length > 0 ? `<select id="sw"><option value="">— Seleziona —</option>${compat.map(s => {
+      const n = this._hass.states[s]?.attributes?.friendly_name || s;
+      return `<option value="${s}" ${s===cur?"selected":""}>${n}</option>`;
+    }).join("")}</select><div class="hint">Mostra solo i dispositivi con tutte le entità irrigazione</div>` : `<div class="empty">Nessun dispositivo irrigazione compatibile</div>`}
+  </div>
+  <div class="row">
+    <label>Nome (opzionale)</label>
+    <input type="text" id="nm" value="${nm}" placeholder="Nome personalizzato">
+    <div class="hint">Lascia vuoto per usare il nome del dispositivo</div>
+  </div>
+</div>`;
+    this.shadowRoot.getElementById("sw")?.addEventListener("change", e => { this._config = { ...this._config, switch: e.target.value }; this._fire(); });
+    this.shadowRoot.getElementById("nm")?.addEventListener("input", e => { if (e.target.value) this._config = { ...this._config, name: e.target.value }; else { const { name, ...r } = this._config; this._config = r; } this._fire(); });
+  }
+  _fire() { this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true })); }
+}
+customElements.define("irrigation-control-card-editor", IrrigationControlCardEditor);
+
+// ── Main Card ──
+class IrrigationControlCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._hass = null; this._config = null; this._entities = null;
+    this._mode = null; this._timerState = "idle";
+    this._remainingSec = 0; this._totalSec = 0; this._timerInterval = null;
+    this._weStarted = false;
+    this._inputLitri = 0; this._inputMin = 0; this._inputSec = 0;
+    this._userEditedLitri = false; this._userEditedTempo = false;
+    this._histExpanded = false;
+  }
+
+  static getConfigElement() { return document.createElement("irrigation-control-card-editor"); }
+  static getStubConfig() { return { switch: "", name: "" }; }
+
+  setConfig(config) {
+    if (config.entities?.switch) this._entities = config.entities;
+    else if (config.switch) this._entities = buildEntities(config.switch);
+    else throw new Error("Seleziona un dispositivo irrigazione nella configurazione");
+    this._configName = config.name || "";
+    this._config = config;
+    if (this._hass) this._render();
+  }
+
+  _getName() {
+    if (this._configName) return this._configName;
+    const sw = this._hass?.states[this._entities.switch];
+    return sw?.attributes?.friendly_name || "Irrigazione";
+  }
+
+  set hass(hass) {
+    const old = this._hass; this._hass = hass;
+    if (old && this._weStarted && this._timerState === "running") {
+      if (old.states[this._entities.switch]?.state === "on" && hass.states[this._entities.switch]?.state !== "on") {
+        this._stopCountdown(); this._timerState = "paused"; this._weStarted = false;
+      }
+    }
+    if (this._timerState === "idle") this._syncFromEntities();
+    this._render();
+  }
+
+  _syncFromEntities() {
+    const t = this._nv(this._entities.target);
+    if (!this._userEditedLitri) this._inputLitri = t > 0 ? t : 1;
+    if (!this._userEditedTempo) { this._inputMin = Math.floor(t / 60); this._inputSec = Math.round(t % 60); }
+  }
+
+  getCardSize() { return 5; }
+  _sv(eid) { if (!eid || !this._hass?.states[eid]) return "unavailable"; return this._hass.states[eid].state; }
+  _nv(eid) { const v = parseFloat(this._sv(eid)); return isNaN(v) ? 0 : v; }
+  _lc(eid) { const s = this._hass?.states[eid]; return s ? new Date(s.last_changed) : null; }
+  _isOn() { return this._sv(this._entities.switch) === "on"; }
+  async _svc(d, s, data) { await this._hass.callService(d, s, data); }
+
+  _selectMode(m) {
+    this._mode = this._mode === m ? null : m;
+    if (!this._mode) { this._userEditedLitri = false; this._userEditedTempo = false; }
+    this._render();
+  }
+
+  async _startLitri() {
+    const v = this._inputLitri; if (v <= 0) return; const e = this._entities;
+    if (e.mode) await this._svc("select", "select_option", { entity_id: e.mode, option: "Capacity" });
+    if (e.target) await this._svc("number", "set_value", { entity_id: e.target, value: v });
+    if (e.cycles) await this._svc("number", "set_value", { entity_id: e.cycles, value: 1 });
+    await this._svc("switch", "turn_on", { entity_id: e.switch });
+  }
+  async _stopLitri() { await this._svc("switch", "turn_off", { entity_id: this._entities.switch }); }
+
+  async _toggleTimer() {
+    if (this._timerState === "idle") await this._startTimerIrr();
+    else if (this._timerState === "running") await this._pauseTimerIrr();
+    else if (this._timerState === "paused") await this._resumeTimerIrr();
+  }
+  async _startTimerIrr() {
+    const tot = this._inputMin * 60 + this._inputSec; if (tot <= 0) return;
+    this._totalSec = tot; this._remainingSec = tot; const e = this._entities;
+    if (e.mode) await this._svc("select", "select_option", { entity_id: e.mode, option: "Duration" });
+    if (e.target) await this._svc("number", "set_value", { entity_id: e.target, value: tot });
+    if (e.cycles) await this._svc("number", "set_value", { entity_id: e.cycles, value: 1 });
+    await this._svc("switch", "turn_on", { entity_id: e.switch });
+    this._weStarted = true; this._timerState = "running"; this._startCountdown(); this._render();
+  }
+  async _pauseTimerIrr() {
+    await this._svc("switch", "turn_off", { entity_id: this._entities.switch });
+    this._stopCountdown(); this._timerState = "paused"; this._weStarted = false; this._render();
+  }
+  async _resumeTimerIrr() {
+    if (this._remainingSec <= 0) { this._resetTimer(); return; } const e = this._entities;
+    if (e.mode) await this._svc("select", "select_option", { entity_id: e.mode, option: "Duration" });
+    if (e.target) await this._svc("number", "set_value", { entity_id: e.target, value: this._remainingSec });
+    if (e.cycles) await this._svc("number", "set_value", { entity_id: e.cycles, value: 1 });
+    await this._svc("switch", "turn_on", { entity_id: e.switch });
+    this._weStarted = true; this._timerState = "running"; this._startCountdown(); this._render();
+  }
+
+  _startCountdown() {
+    this._stopCountdown();
+    this._timerInterval = setInterval(() => {
+      this._remainingSec--;
+      if (this._remainingSec <= 0) { this._remainingSec = 0; this._resetTimer(); return; }
+      this._tickUI();
+    }, 1000);
+  }
+  _stopCountdown() { if (this._timerInterval) { clearInterval(this._timerInterval); this._timerInterval = null; } }
+  _resetTimer() { this._stopCountdown(); this._timerState = "idle"; this._weStarted = false; this._userEditedTempo = false; this._render(); }
+  _tickUI() {
+    const r = this.shadowRoot, mm = Math.floor(this._remainingSec / 60), ss = this._remainingSec % 60;
+    const eM = r.getElementById("t-min"), eS = r.getElementById("t-sec");
+    if (eM) eM.value = String(mm).padStart(2, "0");
+    if (eS) eS.value = String(ss).padStart(2, "0");
+    const bar = r.getElementById("progress-bar");
+    if (bar) bar.style.width = (this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0) + "%";
+  }
+
+  async _toggleSchedule() { const c = this._nv(this._entities.cycles); await this._svc("number", "set_value", { entity_id: this._entities.cycles, value: c === 0 ? 1 : 0 }); }
+  async _adjCycles(d) { const nv = Math.max(1, Math.min(100, this._nv(this._entities.cycles) + d)); await this._svc("number", "set_value", { entity_id: this._entities.cycles, value: nv }); }
+  async _setIv() {
+    const hh = parseInt(this.shadowRoot.getElementById("iv-hh")?.value) || 0;
+    const mm = parseInt(this.shadowRoot.getElementById("iv-mm")?.value) || 0;
+    if (this._entities.interval) await this._svc("number", "set_value", { entity_id: this._entities.interval, value: hh * 3600 + mm * 60 });
+  }
+
+  _ago(date) {
+    if (!date) return null; const d = Date.now() - date.getTime();
+    if (d < 0 || d > 86400000) return null;
+    const m = Math.floor(d / 60000);
+    if (m < 1) return "adesso"; if (m < 60) return `${m} min fa`;
+    return `${Math.floor(m / 60)}h ${m % 60}m fa`;
+  }
+  _fd(s) { s = Math.round(s); if (s < 60) return `${s} s`; const m = Math.floor(s / 60), r = s % 60; if (m < 60) return r > 0 ? `${m}m ${r}s` : `${m} min`; return `${Math.floor(m / 60)}h ${m % 60}m`; }
+  _p2(n) { return String(Math.round(n)).padStart(2, "0"); }
+
+  /**
+   * Parse an ISO or HA timestamp and return local time string HH:MM:SS
+   */
+  _fmtLocalTime(val) {
+    if (!val || val === "unavailable" || val === "unknown") return null;
+    try {
+      const d = new Date(val);
+      if (isNaN(d.getTime())) return null;
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    } catch { return null; }
+  }
+
+  _toggleHist() {
+    this._histExpanded = !this._histExpanded;
+    this._render();
+  }
+
+  _render() {
+    if (!this._hass || !this._entities) return;
+    const e = this._entities;
+    const isOn = this._isOn();
+    const batt = this._nv(e.battery);
+    const hasBatt = this._hass.states[e.battery] !== undefined;
+    const cyc = this._nv(e.cycles); const schedOn = cyc > 0;
+    const ivS = this._nv(e.interval);
+    const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
+    const dur = this._nv(e.last_duration);
+    const vol = this._nv(e.summation);
+    const ago = this._ago(this._lc(e.last_duration));
+    const name = this._getName();
+
+    // Start/end times — format in local TZ
+    const stRaw = this._sv(e.start_time);
+    const etRaw = this._sv(e.end_time);
+    const stLocal = this._fmtLocalTime(stRaw);
+    const etLocal = this._fmtLocalTime(etRaw);
+    const hasStEt = stLocal && etLocal;
+
+    let tM, tS;
+    if (this._timerState !== "idle") { tM = Math.floor(this._remainingSec / 60); tS = this._remainingSec % 60; }
+    else { tM = this._inputMin; tS = this._inputSec; }
+
+    let bTxt, bCls;
+    if (this._timerState === "paused") { bTxt = "In pausa"; bCls = "badge paused"; }
+    else if (isOn) { bTxt = "Irrigando"; bCls = "badge active"; }
+    else { bTxt = "Spento"; bCls = "badge off"; }
+
+    const pP = this._timerState !== "idle" && this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0;
+    const modeOpen = this._mode !== null;
+    const PL = `<svg width="18" height="18" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="white"/></svg>`;
+    const PA = `<svg width="16" height="16" viewBox="0 0 24 24" fill="white"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`;
+
+    this.shadowRoot.innerHTML = `
+<style>
+:host{--accent:#2ecc8b;--accent-dim:rgba(46,204,139,.12);--accent-hover:#27b67a;--blue:#4a90d9;--blue-dim:rgba(74,144,217,.12);--blue-text:#6aabf0;--danger:#e25555;--tm:var(--primary-text-color,#e8e8f0);--ts:var(--secondary-text-color,#8b8da5);--th:var(--disabled-text-color,#5c5e76);--bd:var(--divider-color,rgba(255,255,255,.06))}
+ha-card{overflow:hidden}
+.ch{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--bd)}
+.hl{display:flex;align-items:center;gap:10px}
+.di{width:32px;height:32px;border-radius:8px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center}
+.tt{font-size:15px;font-weight:600;color:var(--tm)}
+.hr{display:flex;align-items:center;gap:10px}
+.bt{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--th);font-family:monospace}
+.bs{width:18px;height:10px;border:1.2px solid var(--th);border-radius:2px;position:relative;overflow:hidden}
+.bf{position:absolute;inset:1px;background:var(--accent);border-radius:1px}
+.bp{width:2px;height:5px;background:var(--th);border-radius:0 1px 1px 0;margin-left:-1px}
+.badge{font-size:11px;font-weight:500;padding:3px 10px;border-radius:20px;transition:all .3s}
+.badge.off{background:var(--bd);color:var(--th)}
+.badge.active{background:var(--accent-dim);color:var(--accent)}
+.badge.paused{background:rgba(234,179,8,.12);color:#eab308}
+.cb{padding:16px 20px}
+.sc{margin-bottom:16px}.sc:last-child{margin-bottom:0}
+.sl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:8px}
+.dv{height:1px;background:var(--bd);margin:0 0 16px}
+.ar{display:flex;gap:8px}
+.ab{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:11px 12px;border-radius:8px;border:1px solid var(--bd);background:transparent;cursor:pointer;font-size:13px;font-weight:500;color:var(--ts);font-family:inherit;transition:all .15s}
+.ab:hover{background:var(--bd);color:var(--tm)}.ab.ac{border-color:rgba(74,144,217,.4);background:var(--blue-dim);color:var(--blue-text)}
+.ip{display:grid;grid-template-rows:0fr;transition:grid-template-rows .25s ease,margin-top .2s;margin-top:0}.ip>*{overflow:hidden}.ip.vi{grid-template-rows:1fr;margin-top:8px}
+.ir{display:flex;gap:8px;align-items:center;padding-top:2px}
+.nw{flex:1;display:flex;align-items:center;border:1px solid var(--bd);border-radius:8px;overflow:hidden;transition:border-color .15s}.nw:focus-within{border-color:rgba(74,144,217,.5)}
+.ni{flex:1;padding:10px 12px;border:none;background:transparent;font-size:20px;font-weight:500;color:var(--tm);text-align:center;outline:none;font-family:monospace}
+.ut{padding:0 14px;font-size:13px;font-weight:600;color:var(--th);background:var(--bd);align-self:stretch;display:flex;align-items:center;border-left:1px solid var(--bd)}
+.tg{flex:1;display:flex;align-items:center;border:1px solid var(--bd);border-radius:8px;overflow:hidden;transition:border-color .15s}.tg:focus-within{border-color:rgba(74,144,217,.5)}.tg.cd{border-color:rgba(46,204,139,.4)}
+.ti{width:50%;text-align:center;padding:10px 4px;border:none;background:transparent;outline:none;font-size:20px;font-weight:500;color:var(--tm);font-family:monospace}.ti.ct{color:var(--accent)}.ti:disabled{opacity:.7}
+.tp{font-size:20px;font-weight:500;color:var(--th);user-select:none;flex-shrink:0}.tp.ct{color:var(--accent)}
+.fh{font-size:10px;color:var(--th);text-align:center;min-width:50px}
+.gb{width:44px;height:44px;border-radius:50%;flex-shrink:0;border:none;background:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;box-shadow:0 2px 12px rgba(46,204,139,.25)}.gb:hover{background:var(--accent-hover)}.gb:active{transform:scale(.93)}
+@keyframes pg{0%,100%{box-shadow:0 0 0 0 rgba(226,85,85,.3)}50%{box-shadow:0 0 0 6px rgba(226,85,85,0)}}
+.gb.rn{animation:pg 1.2s infinite;background:var(--danger);box-shadow:0 2px 12px rgba(226,85,85,.3)}
+.gb.rs{box-shadow:0 0 0 3px var(--accent-dim),0 2px 12px rgba(46,204,139,.25)}
+.pw{height:3px;border-radius:2px;background:var(--bd);margin-top:6px;overflow:hidden;opacity:0;transition:opacity .2s}.pw.vi{opacity:1}
+.pb{height:100%;border-radius:2px;background:var(--accent);transition:width .3s linear}
+.rp{display:grid;grid-template-rows:0fr;transition:grid-template-rows .25s ease,margin-top .2s;margin-top:0}.rp>*{overflow:hidden}.rp.vi{grid-template-rows:1fr;margin-top:12px}
+.sh{display:flex;align-items:center;justify-content:space-between}
+.st{font-size:13px;font-weight:500;color:var(--ts)}
+.to{width:44px;height:24px;border-radius:12px;background:var(--bd);cursor:pointer;position:relative;transition:background .25s}.to.on{background:var(--accent)}
+.tk{width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .25s cubic-bezier(.4,0,.2,1);box-shadow:0 1px 4px rgba(0,0,0,.2)}.to.on .tk{left:22px}
+.sg{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:8px}
+.sf{background:var(--bd);border-radius:8px;padding:10px 12px;min-width:0}
+.fl{font-size:10px;color:var(--th);margin-bottom:6px;letter-spacing:.02em}
+.sp{display:inline-flex;align-items:center}
+.sb{width:30px;height:30px;border:1px solid var(--bd);background:transparent;cursor:pointer;font-size:15px;color:var(--ts);display:flex;align-items:center;justify-content:center;font-family:inherit;transition:all .1s}.sb:hover{color:var(--tm)}.sb:first-child{border-radius:6px 0 0 6px}.sb:last-child{border-radius:0 6px 6px 0}
+.sv{width:38px;height:30px;border-top:1px solid var(--bd);border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;color:var(--tm);font-family:monospace}
+.str{display:flex;align-items:center}
+.ss{width:38px;text-align:center;padding:5px 4px;border:1px solid var(--bd);background:transparent;border-radius:4px;outline:none;font-size:14px;font-weight:500;color:var(--tm);font-family:monospace;transition:border-color .15s}.ss:focus{border-color:rgba(74,144,217,.5)}
+.sep{font-size:13px;color:var(--th);padding:0 4px;user-select:none}
+.sht{font-size:9px;color:var(--th);margin-top:4px;letter-spacing:.05em}
+.hrow{display:flex;align-items:center;gap:12px;padding:4px 0}
+.hi{width:36px;height:36px;border-radius:8px;background:var(--bd);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hn{flex:1}
+.hlb{font-size:12px;color:var(--th)}
+.hv{font-size:15px;font-weight:500;color:var(--tm)}
+.htx{font-size:11px;color:var(--th);white-space:nowrap;font-family:monospace}
+.he{font-size:13px;color:var(--th);text-align:center;padding:12px 0}
+.exp-btn{background:none;border:1px solid var(--bd);border-radius:4px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--th);font-size:14px;font-family:monospace;transition:all .15s;flex-shrink:0;margin-left:6px;padding:0;line-height:1}
+.exp-btn:hover{color:var(--ts);border-color:var(--ts)}
+.exp-btn.open{color:var(--blue-text);border-color:rgba(74,144,217,.4)}
+.detail-panel{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s ease}.detail-panel>*{overflow:hidden}.detail-panel.vi{grid-template-rows:1fr}
+.detail-row{display:flex;align-items:center;gap:8px;padding:4px 0 0 48px}
+.detail-label{font-size:11px;color:var(--th);min-width:36px}
+.detail-val{font-size:13px;font-weight:500;color:var(--tm);font-family:monospace}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield}
+</style>
+<ha-card>
+  <div class="ch">
+    <div class="hl">
+      <div class="di"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg></div>
+      <span class="tt">${name}</span>
+    </div>
+    <div class="hr">
+      ${hasBatt ? `<div class="bt"><div class="bs"><div class="bf" style="width:${Math.min(100,batt)}%"></div></div><div class="bp"></div>${Math.round(batt)}%</div>` : ""}
+      <span class="${bCls}">${bTxt}</span>
+    </div>
+  </div>
+  <div class="cb">
+    <div class="sc">
+      <div class="sl">Eroga per:</div>
+      <div class="ar">
+        <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>Litri</button>
+        <button class="ab ${this._mode==="tempo"?"ac":""}" id="bt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Tempo</button>
+      </div>
+      <div class="ip ${this._mode==="litri"?"vi":""}"><div>
+        <div class="ir">
+          <div class="nw"><input type="number" class="ni" id="vl" value="${Math.round(this._inputLitri)}" min="1" max="999"><div class="ut">L</div></div>
+          <button class="gb ${isOn&&this._mode==="litri"?"rn":""}" id="gl">${isOn&&this._mode==="litri"?PA:PL}</button>
+        </div>
+      </div></div>
+      <div class="ip ${this._mode==="tempo"?"vi":""}"><div>
+        <div class="ir">
+          <div class="tg ${this._timerState==="running"?"cd":""}">
+            <input type="number" class="ti ${this._timerState!=="idle"?"ct":""}" id="t-min" value="${this._p2(tM)}" min="0" max="59" ${this._timerState!=="idle"?"disabled":""}>
+            <span class="tp ${this._timerState!=="idle"?"ct":""}">:</span>
+            <input type="number" class="ti ${this._timerState!=="idle"?"ct":""}" id="t-sec" value="${this._p2(tS)}" min="0" max="59" ${this._timerState!=="idle"?"disabled":""}>
+          </div>
+          <div class="fh">${this._timerState!=="idle"?"rimanente":"mm : ss"}</div>
+          <button class="gb ${this._timerState==="running"?"rn":this._timerState==="paused"?"rs":""}" id="gt">${this._timerState==="running"?PA:PL}</button>
+        </div>
+        <div class="pw ${this._timerState!=="idle"?"vi":""}"><div class="pb" id="progress-bar" style="width:${pP}%"></div></div>
+      </div></div>
+      <div class="rp ${modeOpen?"vi":""}"><div>
+        <div class="sh">
+          <span class="st">Ripetizioni</span>
+          <div class="to ${schedOn?"on":""}" id="sto"><div class="tk"></div></div>
+        </div>
+        ${schedOn?`<div class="sg">
+          <div class="sf"><div class="fl">Cicli</div><div class="sp"><button class="sb" id="cm">\u2212</button><div class="sv">${Math.round(cyc)}</div><button class="sb" id="cp">+</button></div></div>
+          <div class="sf"><div class="fl">Intervallo cicli</div><div class="str"><input type="number" class="ss" id="iv-hh" value="${this._p2(ivH)}" min="0" max="12"><span class="sep">:</span><input type="number" class="ss" id="iv-mm" value="${this._p2(ivM)}" min="0" max="59"></div><div class="sht">hh : mm</div></div>
+        </div>`:""}
+      </div></div>
+    </div>
+    <div class="dv"></div>
+    <div class="sc" style="margin-bottom:0">
+      <div class="sl">Ultima irrigazione</div>
+      ${ago!==null?`
+        <div class="hrow">
+          <div class="hi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--th)" stroke-width="2.2" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg></div>
+          <div class="hn">
+            <div class="hv">${vol.toLocaleString("it-IT",{minimumFractionDigits:1,maximumFractionDigits:1})} L</div>
+            <div class="hlb">Durata: ${this._fd(dur)}</div>
+          </div>
+          <span class="htx">${ago}</span>
+          ${hasStEt ? `<button class="exp-btn ${this._histExpanded?"open":""}" id="hexp">${this._histExpanded?"\u2212":"+"}</button>` : ""}
+        </div>
+        ${hasStEt ? `<div class="detail-panel ${this._histExpanded?"vi":""}"><div>
+          <div class="detail-row"><span class="detail-label">Inizio</span><span class="detail-val">${stLocal}</span></div>
+          <div class="detail-row"><span class="detail-label">Fine</span><span class="detail-val">${etLocal}</span></div>
+        </div></div>` : ""}
+      `:`<div class="he">Nessuna irrigazione recente</div>`}
+    </div>
+  </div>
+</ha-card>`;
+    this._bindEvents();
+  }
+
+  _bindEvents() {
+    const $ = (id) => this.shadowRoot.getElementById(id);
+    $("bl")?.addEventListener("click", () => this._selectMode("litri"));
+    $("bt")?.addEventListener("click", () => this._selectMode("tempo"));
+    $("gl")?.addEventListener("click", () => { if (this._isOn() && this._mode === "litri") this._stopLitri(); else this._startLitri(); });
+    $("gt")?.addEventListener("click", () => this._toggleTimer());
+    $("vl")?.addEventListener("change", ev => { this._inputLitri = Math.max(1, Math.min(999, parseInt(ev.target.value) || 1)); this._userEditedLitri = true; });
+    $("t-min")?.addEventListener("change", ev => { this._inputMin = Math.max(0, Math.min(59, parseInt(ev.target.value) || 0)); this._userEditedTempo = true; });
+    $("t-sec")?.addEventListener("change", ev => { this._inputSec = Math.max(0, Math.min(59, parseInt(ev.target.value) || 0)); this._userEditedTempo = true; });
+    $("sto")?.addEventListener("click", () => this._toggleSchedule());
+    $("cm")?.addEventListener("click", () => this._adjCycles(-1));
+    $("cp")?.addEventListener("click", () => this._adjCycles(1));
+    $("iv-hh")?.addEventListener("change", () => this._setIv());
+    $("iv-mm")?.addEventListener("change", () => this._setIv());
+    $("hexp")?.addEventListener("click", () => this._toggleHist());
+  }
+
+  disconnectedCallback() { this._stopCountdown(); }
+}
+
+customElements.define("irrigation-control-card", IrrigationControlCard);
+window.customCards = window.customCards || [];
+window.customCards.push({ type: "irrigation-control-card", name: "Irrigation Control Card", description: "Card compatta per valvole irrigazione Tuya con timer, pianificazione e storico", preview: true });
+console.info("%c IRRIGATION-CONTROL-CARD %c v1.6.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

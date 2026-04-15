@@ -159,15 +159,8 @@ class IrrigationControlCard extends HTMLElement {
     this._inputLitri = 0; this._inputMin = 0; this._inputSec = 0;
     this._userEditedLitri = false; this._userEditedTempo = false;
     this._histExpanded = false;
-    this._renderPending = false;
-    this.shadowRoot.addEventListener("focusout", () => {
-      requestAnimationFrame(() => {
-        const ae = this.shadowRoot.activeElement;
-        if (!ae || (ae.tagName !== "INPUT" && ae.tagName !== "SELECT")) {
-          if (this._renderPending) this._render();
-        }
-      });
-    });
+    this._domCreated = false;
+    this._el = {};
   }
 
   static getConfigElement() { return document.createElement("irrigation-control-card-editor"); }
@@ -179,6 +172,7 @@ class IrrigationControlCard extends HTMLElement {
     else throw new Error(_t(this._hass, "configError"));
     this._configName = config.name || "";
     this._config = config;
+    this._domCreated = false;
     if (this._hass) this._render();
   }
 
@@ -196,8 +190,6 @@ class IrrigationControlCard extends HTMLElement {
       }
     }
     if (this._timerState === "idle") this._syncFromEntities();
-    const ae = this.shadowRoot.activeElement;
-    if (ae && (ae.tagName === "INPUT" || ae.tagName === "SELECT")) { this._renderPending = true; return; }
     this._render();
   }
 
@@ -213,6 +205,22 @@ class IrrigationControlCard extends HTMLElement {
   _lc(eid) { const s = this._hass?.states[eid]; return s ? new Date(s.last_changed) : null; }
   _isOn() { return this._sv(this._entities.switch) === "on"; }
   async _svc(d, s, data) { await this._hass.callService(d, s, data); }
+
+  // ── DOM helpers ──
+  _txt(el, v) { if (el && el.textContent !== v) el.textContent = v; }
+  _setInput(el, v) { const s = String(v); if (el && el.value !== s) el.value = s; }
+  _cls(el, cls, on) { if (el) el.classList.toggle(cls, !!on); }
+
+  _isEditingGroup(group) {
+    const ae = this.shadowRoot.activeElement;
+    if (!ae || ae.tagName !== "INPUT") return false;
+    switch (group) {
+      case "litri": return ae.id === "vl";
+      case "tempo": return ae.id === "t-min" || ae.id === "t-sec";
+      case "interval": return ae.id === "iv-hh" || ae.id === "iv-mm";
+      default: return false;
+    }
+  }
 
   _selectMode(m) {
     this._mode = this._mode === m ? null : m;
@@ -267,19 +275,17 @@ class IrrigationControlCard extends HTMLElement {
   _stopCountdown() { if (this._timerInterval) { clearInterval(this._timerInterval); this._timerInterval = null; } }
   _resetTimer() { this._stopCountdown(); this._timerState = "idle"; this._weStarted = false; this._userEditedTempo = false; this._render(); }
   _tickUI() {
-    const r = this.shadowRoot, mm = Math.floor(this._remainingSec / 60), ss = this._remainingSec % 60;
-    const eM = r.getElementById("t-min"), eS = r.getElementById("t-sec");
-    if (eM) eM.value = String(mm).padStart(2, "0");
-    if (eS) eS.value = String(ss).padStart(2, "0");
-    const bar = r.getElementById("progress-bar");
-    if (bar) bar.style.width = (this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0) + "%";
+    const mm = Math.floor(this._remainingSec / 60), ss = this._remainingSec % 60;
+    this._setInput(this._el.tMin, this._p2(mm));
+    this._setInput(this._el.tSec, this._p2(ss));
+    if (this._el.bar) this._el.bar.style.width = (this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0) + "%";
   }
 
   async _toggleSchedule() { const c = this._nv(this._entities.cycles); await this._svc("number", "set_value", { entity_id: this._entities.cycles, value: c <= 1 ? 2 : 0 }); }
   async _adjCycles(d) { const nv = Math.max(2, Math.min(100, this._nv(this._entities.cycles) + d)); await this._svc("number", "set_value", { entity_id: this._entities.cycles, value: nv }); }
   async _setIv() {
-    const hh = parseInt(this.shadowRoot.getElementById("iv-hh")?.value) || 0;
-    const mm = parseInt(this.shadowRoot.getElementById("iv-mm")?.value) || 0;
+    const hh = parseInt(this._el.ivHh?.value) || 0;
+    const mm = parseInt(this._el.ivMm?.value) || 0;
     if (this._entities.interval) await this._svc("number", "set_value", { entity_id: this._entities.interval, value: hh * 3600 + mm * 60 });
   }
 
@@ -294,9 +300,6 @@ class IrrigationControlCard extends HTMLElement {
   _fd(s) { s = Math.round(s); if (s < 60) return `${s} s`; const m = Math.floor(s / 60), r = s % 60; if (m < 60) return r > 0 ? `${m}m ${r}s` : `${m} min`; return `${Math.floor(m / 60)}h ${m % 60}m`; }
   _p2(n) { return String(Math.round(n)).padStart(2, "0"); }
 
-  /**
-   * Parse an ISO or HA timestamp and return local time string HH:MM:SS
-   */
   _fmtLocalTime(val) {
     if (!val || val === "unavailable" || val === "unknown") return null;
     try {
@@ -311,9 +314,19 @@ class IrrigationControlCard extends HTMLElement {
     this._render();
   }
 
+  // ── Render dispatcher ──
   _render() {
-    this._renderPending = false;
     if (!this._hass || !this._entities) return;
+    if (!this._domCreated) {
+      this._createDOM();
+      this._domCreated = true;
+    } else {
+      this._update();
+    }
+  }
+
+  // ── Initial full DOM creation (runs once) ──
+  _createDOM() {
     const e = this._entities;
     const isOn = this._isOn();
     const batt = this._nv(e.battery);
@@ -325,13 +338,9 @@ class IrrigationControlCard extends HTMLElement {
     const vol = this._nv(e.summation);
     const ago = this._ago(this._lc(e.last_duration));
     const name = this._getName();
-
-    // Start/end times — format in local TZ
-    const stRaw = this._sv(e.start_time);
-    const etRaw = this._sv(e.end_time);
-    const stLocal = this._fmtLocalTime(stRaw);
-    const etLocal = this._fmtLocalTime(etRaw);
-    const hasStEt = stLocal && etLocal;
+    const stLocal = this._fmtLocalTime(this._sv(e.start_time));
+    const etLocal = this._fmtLocalTime(this._sv(e.end_time));
+    const hasStEt = !!(stLocal && etLocal);
 
     let tM, tS;
     if (this._timerState !== "idle") { tM = Math.floor(this._remainingSec / 60); tS = this._remainingSec % 60; }
@@ -426,7 +435,7 @@ input[type=number]{-moz-appearance:textfield}
       <span class="tt">${name}</span>
     </div>
     <div class="hr">
-      ${hasBatt ? `<div class="bt"><div class="bs"><div class="bf" style="width:${Math.min(100,batt)}%"></div></div><div class="bp"></div>${Math.round(batt)}%</div>` : ""}
+      ${hasBatt ? `<div class="bt"><div class="bs"><div class="bf" style="width:${Math.min(100,batt)}%"></div></div><div class="bp"></div><span class="batt-pct">${Math.round(batt)}%</span></div>` : ""}
       <span class="${bCls}">${bTxt}</span>
     </div>
   </div>
@@ -437,18 +446,18 @@ input[type=number]{-moz-appearance:textfield}
         <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>${t("liters")}</button>
         <button class="ab ${this._mode==="tempo"?"ac":""}" id="bt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${t("time")}</button>
       </div>
-      <div class="ip ${this._mode==="litri"?"vi":""}"><div>
+      <div class="ip ${this._mode==="litri"?"vi":""}" id="ip-litri"><div>
         <div class="ir">
-          <div class="nw"><input type="number" class="ni" id="vl" value="${Math.round(this._inputLitri)}" min="1" max="999"><div class="ut">L</div></div>
+          <div class="nw"><input type="number" inputmode="numeric" pattern="[0-9]*" class="ni" id="vl" value="${Math.round(this._inputLitri)}" min="1" max="999"><div class="ut">L</div></div>
           <button class="gb ${isOn&&this._mode==="litri"?"rn":""}" id="gl">${isOn&&this._mode==="litri"?PA:PL}</button>
         </div>
       </div></div>
-      <div class="ip ${this._mode==="tempo"?"vi":""}"><div>
+      <div class="ip ${this._mode==="tempo"?"vi":""}" id="ip-tempo"><div>
         <div class="ir">
           <div class="tg ${this._timerState==="running"?"cd":""}">
-            <input type="number" class="ti ${this._timerState!=="idle"?"ct":""}" id="t-min" value="${this._p2(tM)}" min="0" max="59" ${this._timerState!=="idle"?"disabled":""}>
+            <input type="number" inputmode="numeric" pattern="[0-9]*" class="ti ${this._timerState!=="idle"?"ct":""}" id="t-min" value="${this._p2(tM)}" min="0" max="59" ${this._timerState!=="idle"?"disabled":""}>
             <span class="tp ${this._timerState!=="idle"?"ct":""}">:</span>
-            <input type="number" class="ti ${this._timerState!=="idle"?"ct":""}" id="t-sec" value="${this._p2(tS)}" min="0" max="59" ${this._timerState!=="idle"?"disabled":""}>
+            <input type="number" inputmode="numeric" pattern="[0-9]*" class="ti ${this._timerState!=="idle"?"ct":""}" id="t-sec" value="${this._p2(tS)}" min="0" max="59" ${this._timerState!=="idle"?"disabled":""}>
           </div>
           <div class="fh">${this._timerState!=="idle"?t("remaining"):"mm : ss"}</div>
           <button class="gb ${this._timerState==="running"?"rn":this._timerState==="paused"?"rs":""}" id="gt">${this._timerState==="running"?PA:PL}</button>
@@ -460,51 +469,174 @@ input[type=number]{-moz-appearance:textfield}
           <span class="st">${t("repeats")}</span>
           <div class="to ${schedOn?"on":""}" id="sto"><div class="tk"></div></div>
         </div>
-        ${schedOn?`<div class="sg">
+        <div class="sg" id="sched-grid" style="display:${schedOn?"grid":"none"}">
           <div class="sf"><div class="fl">${t("cycles")}</div><div class="sp"><button class="sb" id="cm">\u2212</button><div class="sv">${Math.round(cyc)}</div><button class="sb" id="cp">+</button></div></div>
-          <div class="sf"><div class="fl">${t("cycleInterval")}</div><div class="str"><input type="number" class="ss" id="iv-hh" value="${this._p2(ivH)}" min="0" max="12"><span class="sep">:</span><input type="number" class="ss" id="iv-mm" value="${this._p2(ivM)}" min="0" max="59"></div><div class="sht">hh : mm</div></div>
-        </div>`:""}
+          <div class="sf"><div class="fl">${t("cycleInterval")}</div><div class="str"><input type="number" inputmode="numeric" pattern="[0-9]*" class="ss" id="iv-hh" value="${this._p2(ivH)}" min="0" max="12"><span class="sep">:</span><input type="number" inputmode="numeric" pattern="[0-9]*" class="ss" id="iv-mm" value="${this._p2(ivM)}" min="0" max="59"></div><div class="sht">hh : mm</div></div>
+        </div>
       </div></div>
     </div>
     <div class="dv"></div>
     <div class="sc" style="margin-bottom:0">
       <div class="sl">${t("lastIrrigation")}</div>
-      ${ago!==null?`
+      <div class="he" id="hist-empty" style="display:${ago===null?"block":"none"}">${t("noRecent")}</div>
+      <div id="hist-data" style="display:${ago!==null?"block":"none"}">
         <div class="hrow">
           <div class="hi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--th)" stroke-width="2.2" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg></div>
           <div class="hn">
             <div class="hv">${vol.toLocaleString(_numLocale(this._hass),{minimumFractionDigits:1,maximumFractionDigits:1})} L</div>
             <div class="hlb">${t("duration")}: ${this._fd(dur)}</div>
           </div>
-          <span class="htx">${ago}</span>
-          ${hasStEt ? `<button class="exp-btn ${this._histExpanded?"open":""}" id="hexp">${this._histExpanded?"\u2212":"+"}</button>` : ""}
+          <span class="htx">${ago || ""}</span>
+          <button class="exp-btn ${this._histExpanded?"open":""}" id="hexp" style="display:${hasStEt?"flex":"none"}">${this._histExpanded?"\u2212":"+"}</button>
         </div>
-        ${hasStEt ? `<div class="detail-panel ${this._histExpanded?"vi":""}"><div>
-          <div class="detail-row"><span class="detail-label">${t("start")}</span><span class="detail-val">${stLocal}</span></div>
-          <div class="detail-row"><span class="detail-label">${t("end")}</span><span class="detail-val">${etLocal}</span></div>
-        </div></div>` : ""}
-      `:`<div class="he">${t("noRecent")}</div>`}
+        <div class="detail-panel ${this._histExpanded&&hasStEt?"vi":""}"><div>
+          <div class="detail-row"><span class="detail-label">${t("start")}</span><span class="detail-val" id="dv-start">${stLocal || ""}</span></div>
+          <div class="detail-row"><span class="detail-label">${t("end")}</span><span class="detail-val" id="dv-end">${etLocal || ""}</span></div>
+        </div></div>
+      </div>
     </div>
   </div>
 </ha-card>`;
+    this._cacheEls();
     this._bindEvents();
   }
 
+  _cacheEls() {
+    const r = this.shadowRoot;
+    const $ = (id) => r.getElementById(id);
+    const q = (sel) => r.querySelector(sel);
+    this._el = {
+      tt: q(".tt"), bf: q(".bf"), battPct: q(".batt-pct"), badge: q(".badge"),
+      bl: $("bl"), bt: $("bt"),
+      ipLitri: $("ip-litri"), ipTempo: $("ip-tempo"),
+      vl: $("vl"), gl: $("gl"),
+      tg: q(".tg"), tMin: $("t-min"), tSec: $("t-sec"), tp: q(".tp"),
+      fh: q(".fh"), gt: $("gt"), pw: q(".pw"), bar: $("progress-bar"),
+      rp: q(".rp"), sto: $("sto"), schedGrid: $("sched-grid"),
+      svDisp: q(".sv"), ivHh: $("iv-hh"), ivMm: $("iv-mm"),
+      histEmpty: $("hist-empty"), histData: $("hist-data"),
+      hv: q(".hv"), hlb: q(".hlb"), htx: q(".htx"),
+      expBtn: $("hexp"), detailPanel: q(".detail-panel"),
+      dvStart: $("dv-start"), dvEnd: $("dv-end"),
+    };
+  }
+
   _bindEvents() {
-    const $ = (id) => this.shadowRoot.getElementById(id);
-    $("bl")?.addEventListener("click", () => this._selectMode("litri"));
-    $("bt")?.addEventListener("click", () => this._selectMode("tempo"));
-    $("gl")?.addEventListener("click", () => { if (this._isOn() && this._mode === "litri") this._stopLitri(); else this._startLitri(); });
-    $("gt")?.addEventListener("click", () => this._toggleTimer());
-    $("vl")?.addEventListener("change", ev => { this._inputLitri = Math.max(1, Math.min(999, parseInt(ev.target.value) || 1)); this._userEditedLitri = true; });
-    $("t-min")?.addEventListener("change", ev => { this._inputMin = Math.max(0, Math.min(59, parseInt(ev.target.value) || 0)); this._userEditedTempo = true; });
-    $("t-sec")?.addEventListener("change", ev => { this._inputSec = Math.max(0, Math.min(59, parseInt(ev.target.value) || 0)); this._userEditedTempo = true; });
-    $("sto")?.addEventListener("click", () => this._toggleSchedule());
-    $("cm")?.addEventListener("click", () => this._adjCycles(-1));
-    $("cp")?.addEventListener("click", () => this._adjCycles(1));
-    $("iv-hh")?.addEventListener("change", () => this._setIv());
-    $("iv-mm")?.addEventListener("change", () => this._setIv());
-    $("hexp")?.addEventListener("click", () => this._toggleHist());
+    const el = this._el;
+    el.bl?.addEventListener("click", () => this._selectMode("litri"));
+    el.bt?.addEventListener("click", () => this._selectMode("tempo"));
+    el.gl?.addEventListener("click", () => { if (this._isOn() && this._mode === "litri") this._stopLitri(); else this._startLitri(); });
+    el.gt?.addEventListener("click", () => this._toggleTimer());
+    el.vl?.addEventListener("change", ev => { this._inputLitri = Math.max(1, Math.min(999, parseInt(ev.target.value) || 1)); this._userEditedLitri = true; });
+    el.tMin?.addEventListener("change", ev => { this._inputMin = Math.max(0, Math.min(59, parseInt(ev.target.value) || 0)); this._userEditedTempo = true; });
+    el.tSec?.addEventListener("change", ev => { this._inputSec = Math.max(0, Math.min(59, parseInt(ev.target.value) || 0)); this._userEditedTempo = true; });
+    el.sto?.addEventListener("click", () => this._toggleSchedule());
+    this.shadowRoot.getElementById("cm")?.addEventListener("click", () => this._adjCycles(-1));
+    this.shadowRoot.getElementById("cp")?.addEventListener("click", () => this._adjCycles(1));
+    el.ivHh?.addEventListener("change", () => this._setIv());
+    el.ivMm?.addEventListener("change", () => this._setIv());
+    el.expBtn?.addEventListener("click", () => this._toggleHist());
+  }
+
+  // ── Selective DOM update (runs on every subsequent hass update) ──
+  _update() {
+    const e = this._entities;
+    const isOn = this._isOn();
+    const batt = this._nv(e.battery);
+    const cyc = this._nv(e.cycles); const schedOn = cyc > 1;
+    const ivS = this._nv(e.interval);
+    const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
+    const dur = this._nv(e.last_duration);
+    const vol = this._nv(e.summation);
+    const ago = this._ago(this._lc(e.last_duration));
+    const name = this._getName();
+    const stLocal = this._fmtLocalTime(this._sv(e.start_time));
+    const etLocal = this._fmtLocalTime(this._sv(e.end_time));
+    const hasStEt = !!(stLocal && etLocal);
+
+    let tM, tS;
+    if (this._timerState !== "idle") { tM = Math.floor(this._remainingSec / 60); tS = this._remainingSec % 60; }
+    else { tM = this._inputMin; tS = this._inputSec; }
+
+    const t = (k) => _t(this._hass, k);
+    const el = this._el;
+    const PL = `<svg width="18" height="18" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="white"/></svg>`;
+    const PA = `<svg width="16" height="16" viewBox="0 0 24 24" fill="white"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`;
+
+    // ── Header ──
+    this._txt(el.tt, name);
+    if (el.bf) el.bf.style.width = Math.min(100, batt) + "%";
+    if (el.battPct) this._txt(el.battPct, Math.round(batt) + "%");
+
+    let bTxt, bCls;
+    if (this._timerState === "paused") { bTxt = t("paused"); bCls = "paused"; }
+    else if (isOn) { bTxt = t("irrigating"); bCls = "active"; }
+    else { bTxt = t("off"); bCls = "off"; }
+    if (el.badge) { this._txt(el.badge, bTxt); el.badge.className = "badge " + bCls; }
+
+    // ── Mode buttons ──
+    this._cls(el.bl, "ac", this._mode === "litri");
+    this._cls(el.bt, "ac", this._mode === "tempo");
+    this._cls(el.ipLitri, "vi", this._mode === "litri");
+    this._cls(el.ipTempo, "vi", this._mode === "tempo");
+
+    // ── Litri ──
+    if (!this._isEditingGroup("litri")) {
+      this._setInput(el.vl, Math.round(this._inputLitri));
+    }
+    const litriRunning = isOn && this._mode === "litri";
+    this._cls(el.gl, "rn", litriRunning);
+    if (el.gl) el.gl.innerHTML = litriRunning ? PA : PL;
+
+    // ── Tempo ──
+    if (!this._isEditingGroup("tempo")) {
+      this._setInput(el.tMin, this._p2(tM));
+      this._setInput(el.tSec, this._p2(tS));
+    }
+    const timerActive = this._timerState !== "idle";
+    this._cls(el.tg, "cd", this._timerState === "running");
+    this._cls(el.tMin, "ct", timerActive);
+    this._cls(el.tSec, "ct", timerActive);
+    this._cls(el.tp, "ct", timerActive);
+    if (timerActive) { el.tMin?.setAttribute("disabled", ""); el.tSec?.setAttribute("disabled", ""); }
+    else { el.tMin?.removeAttribute("disabled"); el.tSec?.removeAttribute("disabled"); }
+    if (el.fh) this._txt(el.fh, timerActive ? t("remaining") : "mm : ss");
+    if (el.gt) {
+      el.gt.className = "gb" + (this._timerState === "running" ? " rn" : this._timerState === "paused" ? " rs" : "");
+      el.gt.innerHTML = this._timerState === "running" ? PA : PL;
+    }
+    this._cls(el.pw, "vi", timerActive);
+    const pP = timerActive && this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0;
+    if (el.bar) el.bar.style.width = pP + "%";
+
+    // ── Repeats (show/hide via CSS) ──
+    const modeOpen = this._mode !== null;
+    this._cls(el.rp, "vi", modeOpen);
+    this._cls(el.sto, "on", schedOn);
+    if (el.schedGrid) el.schedGrid.style.display = schedOn ? "grid" : "none";
+    if (el.svDisp) this._txt(el.svDisp, String(Math.round(cyc)));
+    if (!this._isEditingGroup("interval")) {
+      this._setInput(el.ivHh, this._p2(ivH));
+      this._setInput(el.ivMm, this._p2(ivM));
+    }
+
+    // ── History (show/hide via CSS) ──
+    const hasData = ago !== null;
+    if (el.histEmpty) el.histEmpty.style.display = hasData ? "none" : "block";
+    if (el.histData) el.histData.style.display = hasData ? "block" : "none";
+    if (hasData) {
+      const loc = _numLocale(this._hass);
+      this._txt(el.hv, vol.toLocaleString(loc, {minimumFractionDigits:1, maximumFractionDigits:1}) + " L");
+      this._txt(el.hlb, t("duration") + ": " + this._fd(dur));
+      this._txt(el.htx, ago);
+    }
+    if (el.expBtn) { el.expBtn.style.display = hasStEt ? "flex" : "none"; this._txt(el.expBtn, this._histExpanded ? "\u2212" : "+"); }
+    this._cls(el.expBtn, "open", this._histExpanded);
+    this._cls(el.detailPanel, "vi", this._histExpanded && hasStEt);
+    if (hasStEt) {
+      this._txt(el.dvStart, stLocal);
+      this._txt(el.dvEnd, etLocal);
+    }
   }
 
   disconnectedCallback() { this._stopCountdown(); }

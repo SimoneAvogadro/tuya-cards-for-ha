@@ -1,8 +1,74 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
- * v1.6.0 — Collapsible start/end, local TZ
+ * v1.7.0 — Multi-language (IT/EN/ZH)
  */
+
+// ── i18n ──
+const I18N = {
+  it: {
+    irrigating: "Irrigando", paused: "In pausa", off: "Spento",
+    dispenseFor: "Eroga per:", liters: "Litri", time: "Tempo",
+    remaining: "rimanente",
+    repeats: "Ripetizioni", cycles: "Cicli", cycleInterval: "Intervallo cicli",
+    lastIrrigation: "Ultima irrigazione", duration: "Durata",
+    start: "Inizio", end: "Fine", noRecent: "Nessuna irrigazione recente",
+    now: "adesso", minAgo: "${m} min fa", hoursAgo: "${h}h ${m}m fa",
+    editorDevice: "Dispositivo irrigazione", editorSelect: "— Seleziona —",
+    editorHint: "Mostra solo i dispositivi con tutte le entità irrigazione",
+    editorNoDevice: "Nessun dispositivo irrigazione compatibile",
+    editorName: "Nome (opzionale)", editorNamePh: "Nome personalizzato",
+    editorNameHint: "Lascia vuoto per usare il nome del dispositivo",
+    configError: "Seleziona un dispositivo irrigazione nella configurazione",
+    defaultName: "Irrigazione",
+    cardDesc: "Card compatta per valvole irrigazione Tuya con timer, pianificazione e storico",
+  },
+  en: {
+    irrigating: "Irrigating", paused: "Paused", off: "Off",
+    dispenseFor: "Dispense for:", liters: "Liters", time: "Time",
+    remaining: "remaining",
+    repeats: "Repeats", cycles: "Cycles", cycleInterval: "Cycle interval",
+    lastIrrigation: "Last irrigation", duration: "Duration",
+    start: "Start", end: "End", noRecent: "No recent irrigation",
+    now: "just now", minAgo: "${m} min ago", hoursAgo: "${h}h ${m}m ago",
+    editorDevice: "Irrigation device", editorSelect: "— Select —",
+    editorHint: "Shows only devices with all irrigation entities",
+    editorNoDevice: "No compatible irrigation device found",
+    editorName: "Name (optional)", editorNamePh: "Custom name",
+    editorNameHint: "Leave empty to use device name",
+    configError: "Select an irrigation device in the configuration",
+    defaultName: "Irrigation",
+    cardDesc: "Compact card for Tuya irrigation valves with timer, scheduling and history",
+  },
+  zh: {
+    irrigating: "灌溉中", paused: "已暂停", off: "关闭",
+    dispenseFor: "灌溉方式：", liters: "升量", time: "时长",
+    remaining: "剩余",
+    repeats: "重复", cycles: "循环次数", cycleInterval: "循环间隔",
+    lastIrrigation: "上次灌溉", duration: "持续时间",
+    start: "开始", end: "结束", noRecent: "无近期灌溉记录",
+    now: "刚刚", minAgo: "${m}分钟前", hoursAgo: "${h}小时${m}分钟前",
+    editorDevice: "灌溉设备", editorSelect: "— 选择 —",
+    editorHint: "仅显示具有所有灌溉实体的设备",
+    editorNoDevice: "未找到兼容的灌溉设备",
+    editorName: "名称（可选）", editorNamePh: "自定义名称",
+    editorNameHint: "留空使用设备名称",
+    configError: "请在配置中选择灌溉设备",
+    defaultName: "灌溉",
+    cardDesc: "适用于涂鸦灌溉阀的紧凑卡片，含定时、计划和历史记录",
+  },
+};
+function _i18nLang(hass) {
+  const lang = hass?.language?.split("-")[0] || "en";
+  return I18N[lang] ? lang : "en";
+}
+function _t(hass, key) { return (I18N[_i18nLang(hass)] || I18N.en)[key] || I18N.en[key] || key; }
+function _tf(hass, key, vars) {
+  let s = _t(hass, key);
+  for (const [k, v] of Object.entries(vars)) s = s.replace("${" + k + "}", v);
+  return s;
+}
+function _numLocale(hass) { const l = hass?.language; return l || "en"; }
 
 const SUFFIXES = {
   mode:          { domain: "select", suffix: "_irrigation_mode" },
@@ -41,6 +107,7 @@ class IrrigationControlCardEditor extends HTMLElement {
     const compat = findCompatible(this._hass);
     const cur = this._config.switch || "";
     const nm = this._config.name || "";
+    const t = (k) => _t(this._hass, k);
     this.shadowRoot.innerHTML = `
 <style>
 .editor{padding:16px;font-family:var(--paper-font-body1_-_font-family,sans-serif)}
@@ -53,16 +120,16 @@ select:focus,input:focus{border-color:#4a90d9}
 </style>
 <div class="editor">
   <div class="row">
-    <label>Dispositivo irrigazione</label>
-    ${compat.length > 0 ? `<select id="sw"><option value="">— Seleziona —</option>${compat.map(s => {
+    <label>${t("editorDevice")}</label>
+    ${compat.length > 0 ? `<select id="sw"><option value="">${t("editorSelect")}</option>${compat.map(s => {
       const n = this._hass.states[s]?.attributes?.friendly_name || s;
       return `<option value="${s}" ${s===cur?"selected":""}>${n}</option>`;
-    }).join("")}</select><div class="hint">Mostra solo i dispositivi con tutte le entità irrigazione</div>` : `<div class="empty">Nessun dispositivo irrigazione compatibile</div>`}
+    }).join("")}</select><div class="hint">${t("editorHint")}</div>` : `<div class="empty">${t("editorNoDevice")}</div>`}
   </div>
   <div class="row">
-    <label>Nome (opzionale)</label>
-    <input type="text" id="nm" value="${nm}" placeholder="Nome personalizzato">
-    <div class="hint">Lascia vuoto per usare il nome del dispositivo</div>
+    <label>${t("editorName")}</label>
+    <input type="text" id="nm" value="${nm}" placeholder="${t("editorNamePh")}">
+    <div class="hint">${t("editorNameHint")}</div>
   </div>
 </div>`;
     this.shadowRoot.getElementById("sw")?.addEventListener("change", e => { this._config = { ...this._config, switch: e.target.value }; this._fire(); });
@@ -101,7 +168,7 @@ class IrrigationControlCard extends HTMLElement {
   setConfig(config) {
     if (config.entities?.switch) this._entities = config.entities;
     else if (config.switch) this._entities = buildEntities(config.switch);
-    else throw new Error("Seleziona un dispositivo irrigazione nella configurazione");
+    else throw new Error(_t(this._hass, "configError"));
     this._configName = config.name || "";
     this._config = config;
     if (this._hass) this._render();
@@ -110,7 +177,7 @@ class IrrigationControlCard extends HTMLElement {
   _getName() {
     if (this._configName) return this._configName;
     const sw = this._hass?.states[this._entities.switch];
-    return sw?.attributes?.friendly_name || "Irrigazione";
+    return sw?.attributes?.friendly_name || _t(this._hass, "defaultName");
   }
 
   set hass(hass) {
@@ -212,8 +279,9 @@ class IrrigationControlCard extends HTMLElement {
     if (!date) return null; const d = Date.now() - date.getTime();
     if (d < 0 || d > 86400000) return null;
     const m = Math.floor(d / 60000);
-    if (m < 1) return "adesso"; if (m < 60) return `${m} min fa`;
-    return `${Math.floor(m / 60)}h ${m % 60}m fa`;
+    if (m < 1) return _t(this._hass, "now");
+    if (m < 60) return _tf(this._hass, "minAgo", { m });
+    return _tf(this._hass, "hoursAgo", { h: Math.floor(m / 60), m: m % 60 });
   }
   _fd(s) { s = Math.round(s); if (s < 60) return `${s} s`; const m = Math.floor(s / 60), r = s % 60; if (m < 60) return r > 0 ? `${m}m ${r}s` : `${m} min`; return `${Math.floor(m / 60)}h ${m % 60}m`; }
   _p2(n) { return String(Math.round(n)).padStart(2, "0"); }
@@ -261,10 +329,11 @@ class IrrigationControlCard extends HTMLElement {
     if (this._timerState !== "idle") { tM = Math.floor(this._remainingSec / 60); tS = this._remainingSec % 60; }
     else { tM = this._inputMin; tS = this._inputSec; }
 
+    const t = (k) => _t(this._hass, k);
     let bTxt, bCls;
-    if (this._timerState === "paused") { bTxt = "In pausa"; bCls = "badge paused"; }
-    else if (isOn) { bTxt = "Irrigando"; bCls = "badge active"; }
-    else { bTxt = "Spento"; bCls = "badge off"; }
+    if (this._timerState === "paused") { bTxt = t("paused"); bCls = "badge paused"; }
+    else if (isOn) { bTxt = t("irrigating"); bCls = "badge active"; }
+    else { bTxt = t("off"); bCls = "badge off"; }
 
     const pP = this._timerState !== "idle" && this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0;
     const modeOpen = this._mode !== null;
@@ -355,10 +424,10 @@ input[type=number]{-moz-appearance:textfield}
   </div>
   <div class="cb">
     <div class="sc">
-      <div class="sl">Eroga per:</div>
+      <div class="sl">${t("dispenseFor")}</div>
       <div class="ar">
-        <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>Litri</button>
-        <button class="ab ${this._mode==="tempo"?"ac":""}" id="bt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Tempo</button>
+        <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>${t("liters")}</button>
+        <button class="ab ${this._mode==="tempo"?"ac":""}" id="bt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${t("time")}</button>
       </div>
       <div class="ip ${this._mode==="litri"?"vi":""}"><div>
         <div class="ir">
@@ -373,40 +442,40 @@ input[type=number]{-moz-appearance:textfield}
             <span class="tp ${this._timerState!=="idle"?"ct":""}">:</span>
             <input type="number" class="ti ${this._timerState!=="idle"?"ct":""}" id="t-sec" value="${this._p2(tS)}" min="0" max="59" ${this._timerState!=="idle"?"disabled":""}>
           </div>
-          <div class="fh">${this._timerState!=="idle"?"rimanente":"mm : ss"}</div>
+          <div class="fh">${this._timerState!=="idle"?t("remaining"):"mm : ss"}</div>
           <button class="gb ${this._timerState==="running"?"rn":this._timerState==="paused"?"rs":""}" id="gt">${this._timerState==="running"?PA:PL}</button>
         </div>
         <div class="pw ${this._timerState!=="idle"?"vi":""}"><div class="pb" id="progress-bar" style="width:${pP}%"></div></div>
       </div></div>
       <div class="rp ${modeOpen?"vi":""}"><div>
         <div class="sh">
-          <span class="st">Ripetizioni</span>
+          <span class="st">${t("repeats")}</span>
           <div class="to ${schedOn?"on":""}" id="sto"><div class="tk"></div></div>
         </div>
         ${schedOn?`<div class="sg">
-          <div class="sf"><div class="fl">Cicli</div><div class="sp"><button class="sb" id="cm">\u2212</button><div class="sv">${Math.round(cyc)}</div><button class="sb" id="cp">+</button></div></div>
-          <div class="sf"><div class="fl">Intervallo cicli</div><div class="str"><input type="number" class="ss" id="iv-hh" value="${this._p2(ivH)}" min="0" max="12"><span class="sep">:</span><input type="number" class="ss" id="iv-mm" value="${this._p2(ivM)}" min="0" max="59"></div><div class="sht">hh : mm</div></div>
+          <div class="sf"><div class="fl">${t("cycles")}</div><div class="sp"><button class="sb" id="cm">\u2212</button><div class="sv">${Math.round(cyc)}</div><button class="sb" id="cp">+</button></div></div>
+          <div class="sf"><div class="fl">${t("cycleInterval")}</div><div class="str"><input type="number" class="ss" id="iv-hh" value="${this._p2(ivH)}" min="0" max="12"><span class="sep">:</span><input type="number" class="ss" id="iv-mm" value="${this._p2(ivM)}" min="0" max="59"></div><div class="sht">hh : mm</div></div>
         </div>`:""}
       </div></div>
     </div>
     <div class="dv"></div>
     <div class="sc" style="margin-bottom:0">
-      <div class="sl">Ultima irrigazione</div>
+      <div class="sl">${t("lastIrrigation")}</div>
       ${ago!==null?`
         <div class="hrow">
           <div class="hi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--th)" stroke-width="2.2" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg></div>
           <div class="hn">
-            <div class="hv">${vol.toLocaleString("it-IT",{minimumFractionDigits:1,maximumFractionDigits:1})} L</div>
-            <div class="hlb">Durata: ${this._fd(dur)}</div>
+            <div class="hv">${vol.toLocaleString(_numLocale(this._hass),{minimumFractionDigits:1,maximumFractionDigits:1})} L</div>
+            <div class="hlb">${t("duration")}: ${this._fd(dur)}</div>
           </div>
           <span class="htx">${ago}</span>
           ${hasStEt ? `<button class="exp-btn ${this._histExpanded?"open":""}" id="hexp">${this._histExpanded?"\u2212":"+"}</button>` : ""}
         </div>
         ${hasStEt ? `<div class="detail-panel ${this._histExpanded?"vi":""}"><div>
-          <div class="detail-row"><span class="detail-label">Inizio</span><span class="detail-val">${stLocal}</span></div>
-          <div class="detail-row"><span class="detail-label">Fine</span><span class="detail-val">${etLocal}</span></div>
+          <div class="detail-row"><span class="detail-label">${t("start")}</span><span class="detail-val">${stLocal}</span></div>
+          <div class="detail-row"><span class="detail-label">${t("end")}</span><span class="detail-val">${etLocal}</span></div>
         </div></div>` : ""}
-      `:`<div class="he">Nessuna irrigazione recente</div>`}
+      `:`<div class="he">${t("noRecent")}</div>`}
     </div>
   </div>
 </ha-card>`;
@@ -435,5 +504,5 @@ input[type=number]{-moz-appearance:textfield}
 
 customElements.define("irrigation-control-card", IrrigationControlCard);
 window.customCards = window.customCards || [];
-window.customCards.push({ type: "irrigation-control-card", name: "Irrigation Control Card", description: "Card compatta per valvole irrigazione Tuya con timer, pianificazione e storico", preview: true });
-console.info("%c IRRIGATION-CONTROL-CARD %c v1.6.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+window.customCards.push({ type: "irrigation-control-card", name: "Irrigation Control Card", description: "Compact card for Tuya irrigation valves with timer, scheduling and history", preview: true });
+console.info("%c IRRIGATION-CONTROL-CARD %c v1.7.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

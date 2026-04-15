@@ -60,4 +60,4 @@ No automated tests. Verify manually on a real HA instance:
 
 ## Additional context
 
-Design decisions, entity behavior details, deployment context, and user preferences are documented in the GDrive shared memory folder `AI/Claude/tuya-cards-for-ha/`.
+Design decisions, entity behavior details, deployment context, and user preferences are documented in the GDrive shared memory folder `AI/Claude/tuya-cards-for-ha/` using this MCP: https://github.com/SimoneAvogadro/mcp-gdrive-fileaccess

@@ -1,7 +1,7 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
- * v1.7.3 — Localized picker name for better discoverability
+ * v1.8.0 — Compactness improvements (no header border, inline empty history, conditional divider)
  */
 
 // ── i18n ──
@@ -12,7 +12,7 @@ const I18N = {
     remaining: "rimanente",
     repeats: "Ripetizioni", cycles: "Cicli", cycleInterval: "Intervallo cicli",
     lastIrrigation: "Ultima irrigazione", duration: "Durata",
-    start: "Inizio", end: "Fine", noRecent: "Nessuna irrigazione recente",
+    start: "Inizio", end: "Fine", noRecent: "Nessuna irrigazione recente", none: "nessuna",
     now: "adesso", minAgo: "${m} min fa", hoursAgo: "${h}h ${m}m fa",
     editorDevice: "Dispositivo irrigazione", editorSelect: "— Seleziona —",
     editorHint: "Mostra solo i dispositivi con tutte le entità irrigazione",
@@ -29,7 +29,7 @@ const I18N = {
     remaining: "remaining",
     repeats: "Repeats", cycles: "Cycles", cycleInterval: "Cycle interval",
     lastIrrigation: "Last irrigation", duration: "Duration",
-    start: "Start", end: "End", noRecent: "No recent irrigation",
+    start: "Start", end: "End", noRecent: "No recent irrigation", none: "none",
     now: "just now", minAgo: "${m} min ago", hoursAgo: "${h}h ${m}m ago",
     editorDevice: "Irrigation device", editorSelect: "— Select —",
     editorHint: "Shows only devices with all irrigation entities",
@@ -46,7 +46,7 @@ const I18N = {
     remaining: "剩余",
     repeats: "重复", cycles: "循环次数", cycleInterval: "循环间隔",
     lastIrrigation: "上次灌溉", duration: "持续时间",
-    start: "开始", end: "结束", noRecent: "无近期灌溉记录",
+    start: "开始", end: "结束", noRecent: "无近期灌溉记录", none: "无",
     now: "刚刚", minAgo: "${m}分钟前", hoursAgo: "${h}小时${m}分钟前",
     editorDevice: "灌溉设备", editorSelect: "— 选择 —",
     editorHint: "仅显示具有所有灌溉实体的设备",
@@ -353,7 +353,7 @@ class IrrigationControlCard extends HTMLElement {
 <style>
 :host{--accent:#2ecc8b;--accent-dim:rgba(46,204,139,.12);--accent-hover:#27b67a;--blue:#4a90d9;--blue-dim:rgba(74,144,217,.12);--blue-text:#6aabf0;--danger:#e25555;--tm:var(--primary-text-color,#e8e8f0);--ts:var(--secondary-text-color,#8b8da5);--th:var(--disabled-text-color,#5c5e76);--bd:var(--divider-color,rgba(255,255,255,.06))}
 ha-card{overflow:hidden}
-.ch{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--bd)}
+.ch{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 6px}
 .hl{display:flex;align-items:center;gap:10px}
 .di{width:32px;height:32px;border-radius:8px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center}
 .tt{font-size:15px;font-weight:600;color:var(--tm)}
@@ -366,10 +366,12 @@ ha-card{overflow:hidden}
 .badge.off{background:var(--bd);color:var(--th)}
 .badge.active{background:var(--accent-dim);color:var(--accent)}
 .badge.paused{background:rgba(234,179,8,.12);color:#eab308}
-.cb{padding:16px 20px}
+.cb{padding:6px 16px 14px}
 .sc{margin-bottom:16px}.sc:last-child{margin-bottom:0}
 .sl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:8px}
-.dv{height:1px;background:var(--bd);margin:0 0 16px}
+.sl-inline{text-transform:none;font-weight:400;letter-spacing:normal;color:var(--ts);margin-left:4px}
+.dv{height:1px;background:var(--bd);margin:0 0 16px;display:none}
+.dv.vi{display:block}
 .ar{display:flex;gap:8px}
 .ab{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:11px 12px;border-radius:8px;border:1px solid var(--bd);background:transparent;cursor:pointer;font-size:13px;font-weight:500;color:var(--ts);font-family:inherit;transition:all .15s}
 .ab:hover{background:var(--bd);color:var(--tm)}.ab.ac{border-color:rgba(74,144,217,.4);background:var(--blue-dim);color:var(--blue-text)}
@@ -409,7 +411,6 @@ ha-card{overflow:hidden}
 .hlb{font-size:12px;color:var(--th)}
 .hv{font-size:15px;font-weight:500;color:var(--tm)}
 .htx{font-size:11px;color:var(--th);white-space:nowrap;font-family:monospace}
-.he{font-size:13px;color:var(--th);text-align:center;padding:12px 0}
 .exp-btn{background:none;border:1px solid var(--bd);border-radius:4px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--th);font-size:14px;font-family:monospace;transition:all .15s;flex-shrink:0;margin-left:6px;padding:0;line-height:1}
 .exp-btn:hover{color:var(--ts);border-color:var(--ts)}
 .exp-btn.open{color:var(--blue-text);border-color:rgba(74,144,217,.4)}
@@ -433,7 +434,6 @@ input[type=number]{-moz-appearance:textfield}
   </div>
   <div class="cb">
     <div class="sc">
-      <div class="sl">${t("dispenseFor")}</div>
       <div class="ar">
         <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>${t("liters")}</button>
         <button class="ab ${this._mode==="tempo"?"ac":""}" id="bt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${t("time")}</button>
@@ -467,10 +467,9 @@ input[type=number]{-moz-appearance:textfield}
         </div>
       </div></div>
     </div>
-    <div class="dv"></div>
+    <div class="dv ${modeOpen?"vi":""}" id="divider"></div>
     <div class="sc" style="margin-bottom:0">
-      <div class="sl">${t("lastIrrigation")}</div>
-      <div class="he" id="hist-empty" style="display:${ago===null?"block":"none"}">${t("noRecent")}</div>
+      <div class="sl" id="hist-label">${t("lastIrrigation")}<span class="sl-inline" id="hist-empty-inline" style="display:${ago===null?"inline":"none"}">: ${t("none")}</span></div>
       <div id="hist-data" style="display:${ago!==null?"block":"none"}">
         <div class="hrow">
           <div class="hi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--th)" stroke-width="2.2" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg></div>
@@ -506,7 +505,7 @@ input[type=number]{-moz-appearance:textfield}
       fh: q(".fh"), gt: $("gt"), pw: q(".pw"), bar: $("progress-bar"),
       rp: q(".rp"), sto: $("sto"), schedGrid: $("sched-grid"),
       svDisp: q(".sv"), ivHh: $("iv-hh"), ivMm: $("iv-mm"),
-      histEmpty: $("hist-empty"), histData: $("hist-data"),
+      histEmptyInline: $("hist-empty-inline"), histData: $("hist-data"), divider: $("divider"),
       hv: q(".hv"), hlb: q(".hlb"), htx: q(".htx"),
       expBtn: $("hexp"), detailPanel: q(".detail-panel"),
       dvStart: $("dv-start"), dvEnd: $("dv-end"),
@@ -604,6 +603,7 @@ input[type=number]{-moz-appearance:textfield}
     // ── Repeats (show/hide via CSS) ──
     const modeOpen = this._mode !== null;
     this._cls(el.rp, "vi", modeOpen);
+    this._cls(el.divider, "vi", modeOpen);
     this._cls(el.sto, "on", schedOn);
     if (el.schedGrid) el.schedGrid.style.display = schedOn ? "grid" : "none";
     if (el.svDisp) this._txt(el.svDisp, String(Math.round(cyc)));
@@ -614,7 +614,7 @@ input[type=number]{-moz-appearance:textfield}
 
     // ── History (show/hide via CSS) ──
     const hasData = ago !== null;
-    if (el.histEmpty) el.histEmpty.style.display = hasData ? "none" : "block";
+    if (el.histEmptyInline) el.histEmptyInline.style.display = hasData ? "none" : "inline";
     if (el.histData) el.histData.style.display = hasData ? "block" : "none";
     if (hasData) {
       const loc = _numLocale(this._hass);
@@ -656,4 +656,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v1.7.3 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v1.8.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

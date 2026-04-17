@@ -1,13 +1,13 @@
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
- * v1.0.0 — Multi-language (IT/EN/ZH)
+ * v1.1.0 — Multi-language (IT/EN/ZH)
  */
 
 // ── i18n ──
 const SM_I18N = {
   it: {
-    soil: "Terreno", temperature: "Temperatura", humidity: "Umidità",
+    soil: "Terreno", temperature: "Temperatura", humidity: "Aria",
     editorDevice: "Sensore umidità suolo", editorSelect: "— Seleziona —",
     editorHint: "Mostra solo i sensori con temperatura, umidità suolo e aria",
     editorNoDevice: "Nessun sensore compatibile trovato",
@@ -21,7 +21,7 @@ const SM_I18N = {
     cardDesc: "Card compatta per sensori umidità suolo, temperatura e umidità aria",
   },
   en: {
-    soil: "Soil", temperature: "Temperature", humidity: "Humidity",
+    soil: "Soil", temperature: "Temperature", humidity: "Air",
     editorDevice: "Soil moisture sensor", editorSelect: "— Select —",
     editorHint: "Shows only sensors with temperature, soil moisture and air humidity",
     editorNoDevice: "No compatible sensor found",
@@ -35,7 +35,7 @@ const SM_I18N = {
     cardDesc: "Compact card for soil moisture, temperature and air humidity sensors",
   },
   zh: {
-    soil: "土壤", temperature: "温度", humidity: "湿度",
+    soil: "土壤", temperature: "温度", humidity: "空气",
     editorDevice: "土壤湿度传感器", editorSelect: "— 选择 —",
     editorHint: "仅显示具有温度、土壤湿度和空气湿度的传感器",
     editorNoDevice: "未找到兼容的传感器",
@@ -240,27 +240,28 @@ class SoilMoistureCard extends HTMLElement {
 <style>
 :host{--sm-green:#2ecc8b;--sm-yellow:#eab308;--sm-red:#e25555;--tm:var(--primary-text-color,#e8e8f0);--ts:var(--secondary-text-color,#8b8da5);--th:var(--disabled-text-color,#5c5e76);--bd:var(--divider-color,rgba(255,255,255,.06))}
 ha-card{overflow:hidden}
-.ch{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--bd)}
+.ch{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 6px}
 .hl{display:flex;align-items:center;gap:10px}
-.di{width:32px;height:32px;border-radius:8px;background:rgba(46,204,139,.12);display:flex;align-items:center;justify-content:center}
-.tt{font-size:15px;font-weight:600;color:var(--tm)}
+.di{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background .3s}
+.di svg{transition:fill .3s}
+.tt{font-size:14px;font-weight:600;color:var(--tm)}
 .hr{display:flex;align-items:center;gap:10px}
 .bt{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--th);font-family:monospace}
 .bs{width:18px;height:10px;border:1.2px solid var(--th);border-radius:2px;position:relative;overflow:hidden}
 .bf{position:absolute;inset:1px;background:var(--sm-green);border-radius:1px}
 .bp{width:2px;height:5px;background:var(--th);border-radius:0 1px 1px 0;margin-left:-1px}
-.cb{padding:16px 20px}
-.cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:center}
-.col-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:6px}
-.col-value{font-size:22px;font-weight:600;color:var(--tm);font-family:monospace;line-height:1.2}
-.col-unit{font-size:12px;font-weight:400;color:var(--ts)}
-.bar-wrap{height:4px;border-radius:2px;background:var(--bd);margin-top:8px;overflow:hidden}
+.cb{padding:6px 16px 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center}
+.col-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:4px}
+.col-value{font-size:18px;font-weight:600;color:var(--tm);font-family:monospace;line-height:1.2}
+.col-unit{font-size:11px;font-weight:400;color:var(--ts)}
+.bar-wrap{height:4px;border-radius:2px;background:var(--bd);margin-top:6px;overflow:hidden}
 .bar-fill{height:100%;border-radius:2px;transition:width .4s ease,background .3s}
 </style>
 <ha-card>
   <div class="ch">
     <div class="hl">
-      <div class="di"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--sm-green)" stroke-width="2.2" stroke-linecap="round"><path d="M12 22c4-4 8-7.5 8-12A8 8 0 004 10c0 4.5 4 8 8 12z"/><path d="M12 14a3 3 0 100-6 3 3 0 000 6z"/></svg></div>
+      <div class="di" id="icon" style="background:${cc.dim}"><svg width="18" height="18" viewBox="0 0 24 24" fill="${cc.text}"><path d="M12 2.5S5 10 5 15a7 7 0 0014 0c0-5-7-12.5-7-12.5zm-1 15c-2.5-.3-4.5-2.3-4.7-4.8-.1-.4.2-.7.5-.7s.6.2.7.6c.2 1.9 1.7 3.4 3.6 3.6.4 0 .6.3.6.7s-.3.6-.7.6z"/></svg></div>
       <span class="tt">${name}</span>
     </div>
     <div class="hr">
@@ -294,6 +295,8 @@ ha-card{overflow:hidden}
       tt: r.querySelector(".tt"),
       bf: r.querySelector(".bf"),
       battPct: r.querySelector(".batt-pct"),
+      icon: r.getElementById("icon"),
+      iconSvg: r.querySelector("#icon svg"),
       vSoil: r.getElementById("v-soil"),
       barSoil: r.getElementById("bar-soil"),
       vTemp: r.getElementById("v-temp"),
@@ -317,6 +320,9 @@ ha-card{overflow:hidden}
     if (el.bf) el.bf.style.width = Math.min(100, batt) + "%";
     if (el.battPct) this._txt(el.battPct, Math.round(batt) + "%");
 
+    if (el.icon) el.icon.style.background = cc.dim;
+    if (el.iconSvg) el.iconSvg.setAttribute("fill", cc.text);
+
     if (el.vSoil) {
       const soilTxt = soil.toLocaleString(loc, {maximumFractionDigits:0}) + "%";
       this._txt(el.vSoil, soilTxt);
@@ -339,4 +345,4 @@ ha-card{overflow:hidden}
 customElements.define("soil-moisture-card", SoilMoistureCard);
 window.customCards = window.customCards || [];
 window.customCards.push({ type: "soil-moisture-card", name: "Soil Moisture Card", description: "Compact card for soil moisture, temperature and air humidity sensors", preview: true });
-console.info("%c SOIL-MOISTURE-CARD %c v1.0.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c SOIL-MOISTURE-CARD %c v1.1.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

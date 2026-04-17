@@ -9,7 +9,7 @@ Collection of custom Lovelace cards for Home Assistant, designed for Tuya-based 
 | Card | Device | Status |
 |------|--------|--------|
 | `irrigation-control-card` | Tuya TS0601 irrigation valves | v1.6.0 |
-| `soil-moisture-card` | Soil/air moisture sensors | Planned |
+| `soil-moisture-card` | Soil/air moisture + temperature sensors (ZG-303Z) | v1.0.0 |
 
 ## Installation
 
@@ -97,6 +97,57 @@ Given a switch entity `switch.<PREFIX>`, the card auto-discovers:
 | battery | sensor | `_battery` | No |
 | start_time | sensor | `_irrigation_start_time` | No |
 | end_time | sensor | `_irrigation_end_time` | No |
+
+---
+
+## Soil Moisture Card
+
+Compact card for soil moisture, temperature and air humidity sensors. Displays all three readings in a balanced three-column layout with a colored progress bar for soil moisture.
+
+### Features
+
+- **Three-column layout**: soil moisture, temperature, air humidity at a glance
+- **Colored progress bar**: soil moisture bar changes color based on configurable thresholds
+- **Configurable thresholds**: set optimal (green) and acceptable (yellow) ranges per plant type; values outside acceptable range show red
+- **Auto-discovery**: from a single `_soil_moisture` sensor entity, builds all companion entity IDs via suffix convention
+- **Visual Editor**: dropdown shows only sensors with all required companion entities, plus threshold configuration
+- **Battery indicator**: shown if battery entity exists, hidden otherwise
+- **Theme-aware**: uses HA CSS variables for automatic light/dark support
+
+### Compatibility
+
+Tested on **HOBEIAN ZG-303Z** (Excellux 3-in-1) soil moisture sensor, paired via ZHA.
+
+### Configuration
+
+```yaml
+type: custom:soil-moisture-card
+entity: sensor.umidita_terreno_1_soil_moisture
+name: Umidita terreno 1  # optional, defaults to friendly_name
+opt_min: 40               # optional, optimal range lower bound (default 40)
+opt_max: 60               # optional, optimal range upper bound (default 60)
+acc_min: 20               # optional, acceptable range lower bound (default 20)
+acc_max: 80               # optional, acceptable range upper bound (default 80)
+```
+
+### Threshold color logic
+
+```
+  RED    |  YELLOW  |  GREEN  |  YELLOW  |  RED
+---------+----------+---------+----------+---------
+  0%   acc_min   opt_min   opt_max   acc_max   100%
+```
+
+### Entity suffix mapping
+
+Given a sensor entity `sensor.<PREFIX>_soil_moisture`, the card auto-discovers:
+
+| Key | Domain | Suffix | Required |
+|-----|--------|--------|----------|
+| soil_moisture | sensor | `_soil_moisture` | Yes |
+| temperature | sensor | `_temperature` | Yes |
+| humidity | sensor | `_humidity` | Yes |
+| battery | sensor | `_battery` | No |
 
 ---
 

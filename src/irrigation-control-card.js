@@ -1,7 +1,7 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
- * v1.7.0 — Multi-language (IT/EN/ZH)
+ * v1.7.2 — Localized picker name for better discoverability
  */
 
 // ── i18n ──
@@ -636,5 +636,20 @@ input[type=number]{-moz-appearance:textfield}
 
 customElements.define("irrigation-control-card", IrrigationControlCard);
 window.customCards = window.customCards || [];
-window.customCards.push({ type: "irrigation-control-card", name: "Irrigation Control Card", description: "Compact card for Tuya irrigation valves with timer, scheduling and history", preview: true });
-console.info("%c IRRIGATION-CONTROL-CARD %c v1.7.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+// Localized picker name based on browser language, with English term in parentheses
+// so searches in either the local language or English both match.
+(function () {
+  const lang = (navigator.language || "en").split("-")[0];
+  const pickerName = {
+    it: "Irrigazione (Irrigation Control)",
+    zh: "灌溉控制 (Irrigation Control)",
+    en: "Irrigation Control Card",
+  }[lang] || "Irrigation Control Card";
+  const pickerDesc = {
+    it: "Card compatta per valvole irrigazione Tuya con timer, pianificazione e storico",
+    zh: "适用于涂鸦灌溉阀的紧凑卡片，含定时、计划和历史记录",
+    en: "Compact card for Tuya irrigation valves with timer, scheduling and history",
+  }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
+  window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
+})();
+console.info("%c IRRIGATION-CONTROL-CARD %c v1.7.2 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

@@ -1,7 +1,7 @@
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
- * v1.1.0 — Multi-language (IT/EN/ZH)
+ * v1.1.1 — Localized picker name for better discoverability
  */
 
 // ── i18n ──
@@ -344,5 +344,20 @@ ha-card{overflow:hidden}
 
 customElements.define("soil-moisture-card", SoilMoistureCard);
 window.customCards = window.customCards || [];
-window.customCards.push({ type: "soil-moisture-card", name: "Soil Moisture Card", description: "Compact card for soil moisture, temperature and air humidity sensors", preview: true });
-console.info("%c SOIL-MOISTURE-CARD %c v1.1.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+// Localized picker name based on browser language, with English term in parentheses
+// so searches in either the local language or English both match.
+(function () {
+  const lang = (navigator.language || "en").split("-")[0];
+  const pickerName = {
+    it: "Umidità Terreno (Soil Moisture)",
+    zh: "土壤湿度 (Soil Moisture)",
+    en: "Soil Moisture / Humidity Sensor",
+  }[lang] || "Soil Moisture / Humidity Sensor";
+  const pickerDesc = {
+    it: "Card compatta per sensori umidità terreno, temperatura e umidità aria",
+    zh: "土壤湿度、温度和空气湿度传感器紧凑卡片",
+    en: "Compact card for soil moisture, temperature and air humidity sensors",
+  }[lang] || "Compact card for soil moisture, temperature and air humidity sensors";
+  window.customCards.push({ type: "soil-moisture-card", name: pickerName, description: pickerDesc, preview: true });
+})();
+console.info("%c SOIL-MOISTURE-CARD %c v1.1.1 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

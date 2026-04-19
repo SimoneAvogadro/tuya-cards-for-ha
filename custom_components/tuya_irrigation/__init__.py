@@ -265,6 +265,13 @@ def _async_register_services(
         switch_entity: str = call.data[ATTR_SWITCH_ENTITY]
         seconds: int = int(call.data[ATTR_SECONDS])
 
+        if not switch_entity.startswith("switch."):
+            _LOGGER.error(
+                "irrigation_by_seconds requires a switch.* entity, got %s",
+                switch_entity,
+            )
+            return
+
         _cancel_existing(switch_entity)
         # Create and register the task BEFORE any await, so the cancelled old
         # task (whose finally block will run during our first await) sees that

@@ -1,85 +1,127 @@
-# Tuya Cards for HA
+# Tuya Irrigation + Cards for HA
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
-Collection of custom Lovelace cards for Home Assistant, designed for Tuya-based smart devices paired via ZHA or Zigbee2MQTT. Each card auto-discovers compatible devices by checking entity suffix patterns — no manual entity configuration needed.
+Custom Home Assistant integration **plus** two Lovelace cards for Tuya-based smart devices paired via ZHA or Zigbee2MQTT.
 
-## Cards included
+The **integration** exposes two server-side services (`irrigation_by_seconds`, `irrigation_by_liters`) that reliably open and close an irrigation valve on a timer or by delivered volume — working around buggy valve firmware (e.g. GiEX QT06 / `_TZE200_a7sghmms`) that silently ignores its own auto-off timer under ZHA.
 
-| Card | Device | Status |
-|------|--------|--------|
-| `irrigation-control-card` | Tuya TS0601 irrigation valves | v1.6.0 |
-| `soil-moisture-card` | Soil/air moisture + temperature sensors (ZG-303Z) | v1.0.0 |
+The **cards** auto-discover compatible devices from a single entity via suffix conventions — no manual entity configuration needed.
 
-## Installation
+## What's included
 
-### HACS (recommended)
+| Component | Purpose | Status |
+|---|---|---|
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services | v2.0.0 |
+| `irrigation-control-card` | Lovelace card driving the services above | v2.0.0 |
+| `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
-1. Open HACS in Home Assistant
-2. Go to **Frontend** > three-dot menu > **Custom repositories**
-3. Add this repository URL, category **Dashboard**
-4. Search "Tuya Cards for HA" and install
-5. Restart Home Assistant
+## Installation (HACS)
 
-A single resource (`tuya-cards.js`) registers all cards automatically.
+1. Open HACS in Home Assistant.
+2. Three-dot menu → **Custom repositories** → add this repository URL, category **Integration**.
+3. Search "Tuya Irrigation" → **Install**.
+4. **Restart Home Assistant** (required after integration install).
+5. The card bundle is served automatically by the integration and auto-registered as a Lovelace resource (only in *storage* mode, the default). Hard-refresh your browser (Ctrl+Shift+R).
 
-### Manual
+### Upgrading from v1.x
 
-1. Download `tuya-cards.js` from the [latest release](../../releases/latest)
-2. Copy it to `/config/www/tuya-cards.js`
-3. Add the resource in **Settings > Dashboards > Resources**:
-   - URL: `/local/tuya-cards.js`
-   - Type: JavaScript Module
+v1.x was distributed as a pure dashboard (Lovelace-only) HACS repo. v2.0.0 is now an integration.
+
+1. Remove the old Lovelace resource pointing to `/hacsfiles/tuya-cards-for-ha/tuya-cards.js` or `/local/tuya-cards.js`.
+2. HACS → remove the old installation.
+3. Re-add this repo as **Integration** and install (see above).
+4. After HA restart, the new resource `/tuya_irrigation/tuya-cards.js?v=2.0.0` will be registered automatically.
+5. Existing `custom:irrigation-control-card` YAML keeps working. The cycles/interval UI is hidden for now (planned re-enablement once the integration supports scheduling).
+
+### Manual install (YAML mode or no HACS)
+
+1. Copy the `custom_components/tuya_irrigation/` directory into `/config/custom_components/`.
+2. Restart HA.
+3. If Lovelace is in YAML mode, manually add to your `resources:`:
+   ```yaml
+   - url: /tuya_irrigation/tuya-cards.js
+     type: module
+   ```
+
+---
+
+## Services
+
+### `tuya_irrigation.irrigation_by_seconds`
+
+Opens the valve, waits N seconds server-side, closes the valve. The timer runs inside Home Assistant, so it works regardless of the valve firmware's native auto-off behaviour — even with browser closed, for nightly automations.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `switch_entity` | entity_id (switch) | yes | Valve switch to control |
+| `seconds` | int [1, 43200] | yes | How long to keep the valve open |
+
+Example (automation):
+```yaml
+- alias: "Irrigazione notturna"
+  trigger: { platform: time, at: "22:00:00" }
+  action:
+    - service: tuya_irrigation.irrigation_by_seconds
+      data:
+        switch_entity: switch.tze200_a7sghmms_ts0601
+        seconds: 600   # 10 minutes
+```
+
+### `tuya_irrigation.irrigation_by_liters`
+
+Opens the valve, watches `sensor.<prefix>_summation_delivered`, closes when the target volume has been delivered (plus a safety timeout).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `switch_entity` | entity_id (switch) | yes | Valve switch to control |
+| `liters` | number [0.001, 10000] | yes | Target volume to deliver |
+| `timeout_seconds` | int [60, 86400] | no (default 3600) | Force-close after this many seconds if volume never reached |
+
+Example:
+```yaml
+- service: tuya_irrigation.irrigation_by_liters
+  data:
+    switch_entity: switch.tze200_a7sghmms_ts0601
+    liters: 10
+    timeout_seconds: 1800
+```
+
+### Behavior notes
+
+- Calling a service on a switch that is already being irrigated **cancels** the previous task and starts a new one.
+- When a task is cancelled (or HA shuts down), its `finally` block still calls `switch.turn_off` — the valve will not be left open.
+- During a run, pressing the stop button on the card or calling `switch.turn_off` directly aborts the task and closes the valve cleanly.
 
 ---
 
 ## Irrigation Control Card
 
-Compact card for Tuya smart irrigation valves (TS0601 chipset). Replaces 8+ scattered entities with a single widget.
+Compact card for Tuya smart irrigation valves. Replaces a handful of scattered entities with a single widget that drives the integration's services.
 
 ### Features
 
-- **Dual-mode manual irrigation**: by liters (Capacity) or by time (Duration)
-- **Live countdown timer** with pause/resume
-- **Scheduling**: toggle repetitions, set cycle count and interval (hh:mm)
-- **History**: last irrigation volume + duration + relative timestamp, collapsible start/end times
-- **Auto-discovery**: from a single switch entity, builds all companion entity IDs via suffix convention
-- **Visual Editor**: dropdown shows only switches with all required companion entities
-- **Battery indicator**: shown if battery entity exists, hidden otherwise
-- **Theme-aware**: uses HA CSS variables for automatic light/dark support
+- **Dual-mode manual irrigation**: by liters or by seconds — both dispatched server-side via the integration.
+- **Live countdown**: visual feedback while the integration's server-side timer runs.
+- **History**: last irrigation volume + duration + relative timestamp, collapsible start/end times.
+- **Auto-discovery**: from a single switch entity, builds all companion entity IDs via suffix convention.
+- **Visual editor**: dropdown shows only switches with all required companion entities.
+- **Battery indicator**: shown if battery entity exists.
+- **Integration-missing banner**: the card warns if the `tuya_irrigation` integration is not installed.
+- **Theme-aware**: uses HA CSS variables for automatic light/dark support.
+
+The cycles/interval scheduling UI is temporarily hidden in v2.0; the code and entity discovery are preserved and will be re-enabled once the integration gains a scheduling service.
 
 ### Compatibility
 
-Tested on **Tuya TS0601** (`_TZE200_a7sghmms`) smart irrigation valve.
-
-Works with any Tuya irrigation valve exposing the same entity suffix pattern, regardless of Zigbee coordinator (ZHA, Zigbee2MQTT, deCONZ).
+Tested on **Tuya TS0601** (`_TZE200_a7sghmms`, GiEX QT06) smart irrigation valve. Works with any Tuya irrigation valve exposing the same entity suffix pattern, regardless of Zigbee coordinator (ZHA, Zigbee2MQTT, deCONZ).
 
 ### Configuration
-
-**Minimal (recommended):**
 
 ```yaml
 type: custom:irrigation-control-card
 switch: switch.tze200_a7sghmms_ts0601
 name: Irrigatore 31  # optional, defaults to friendly_name
-```
-
-The card auto-discovers all companion entities from the switch name using suffix conventions.
-
-**Legacy (explicit entities):**
-
-```yaml
-type: custom:irrigation-control-card
-name: Irrigatore 31
-entities:
-  switch: switch.tze200_a7sghmms_ts0601
-  mode: select.tze200_a7sghmms_ts0601_irrigation_mode
-  target: number.tze200_a7sghmms_ts0601_irrigation_target
-  cycles: number.tze200_a7sghmms_ts0601_irrigation_cycles
-  interval: number.tze200_a7sghmms_ts0601_irrigation_interval
-  last_duration: sensor.tze200_a7sghmms_ts0601_last_irrigation_duration
-  summation: sensor.tze200_a7sghmms_ts0601_summation_delivered
-  battery: sensor.tze200_a7sghmms_ts0601_battery
 ```
 
 ### Entity suffix mapping
@@ -90,8 +132,8 @@ Given a switch entity `switch.<PREFIX>`, the card auto-discovers:
 |-----|--------|--------|----------|
 | mode | select | `_irrigation_mode` | Yes |
 | target | number | `_irrigation_target` | Yes |
-| cycles | number | `_irrigation_cycles` | Yes |
-| interval | number | `_irrigation_interval` | Yes |
+| cycles | number | `_irrigation_cycles` | Yes (discovered but UI hidden) |
+| interval | number | `_irrigation_interval` | Yes (discovered but UI hidden) |
 | last_duration | sensor | `_last_irrigation_duration` | Yes |
 | summation | sensor | `_summation_delivered` | Yes |
 | battery | sensor | `_battery` | No |
@@ -106,13 +148,12 @@ Compact card for soil moisture, temperature and air humidity sensors. Displays a
 
 ### Features
 
-- **Three-column layout**: soil moisture, temperature, air humidity at a glance
-- **Colored progress bar**: soil moisture bar changes color based on configurable thresholds
-- **Configurable thresholds**: set optimal (green) and acceptable (yellow) ranges per plant type; values outside acceptable range show red
-- **Auto-discovery**: from a single `_soil_moisture` sensor entity, builds all companion entity IDs via suffix convention
-- **Visual Editor**: dropdown shows only sensors with all required companion entities, plus threshold configuration
-- **Battery indicator**: shown if battery entity exists, hidden otherwise
-- **Theme-aware**: uses HA CSS variables for automatic light/dark support
+- **Three-column layout**: soil moisture, temperature, air humidity at a glance.
+- **Colored progress bar**: soil moisture changes color based on configurable thresholds.
+- **Configurable thresholds**: optimal (green) and acceptable (yellow) ranges per plant; outside acceptable = red.
+- **Auto-discovery**: from a single `_soil_moisture` sensor, builds all companion entities.
+- **Visual editor** with threshold configuration.
+- **Battery indicator** (if available).
 
 ### Compatibility
 
@@ -123,11 +164,11 @@ Tested on **HOBEIAN ZG-303Z** (Excellux 3-in-1) soil moisture sensor, paired via
 ```yaml
 type: custom:soil-moisture-card
 entity: sensor.umidita_terreno_1_soil_moisture
-name: Umidita terreno 1  # optional, defaults to friendly_name
-opt_min: 40               # optional, optimal range lower bound (default 40)
-opt_max: 60               # optional, optimal range upper bound (default 60)
-acc_min: 20               # optional, acceptable range lower bound (default 20)
-acc_max: 80               # optional, acceptable range upper bound (default 80)
+name: Umidita terreno 1
+opt_min: 40
+opt_max: 60
+acc_min: 20
+acc_max: 80
 ```
 
 ### Threshold color logic
@@ -140,8 +181,6 @@ acc_max: 80               # optional, acceptable range upper bound (default 80)
 
 ### Entity suffix mapping
 
-Given a sensor entity `sensor.<PREFIX>_soil_moisture`, the card auto-discovers:
-
 | Key | Domain | Suffix | Required |
 |-----|--------|--------|----------|
 | soil_moisture | sensor | `_soil_moisture` | Yes |
@@ -153,10 +192,22 @@ Given a sensor entity `sensor.<PREFIX>_soil_moisture`, the card auto-discovers:
 
 ## Technical details
 
-- Pure **HTMLElement** with Shadow DOM (no LitElement dependency)
-- Client-side countdown timer via `setInterval`
-- CSS uses HA theme variables (`--primary-text-color`, `--card-background-color`, etc.)
-- Each card auto-discovers its entities — extra cards for devices you don't have are simply invisible
+- **Integration**: pure-Python `custom_components/tuya_irrigation/`, no external dependencies. Uses `async_register_static_paths` + `StaticPathConfig` (compatible with HA ≥ 2024.1).
+- **Cards**: pure `HTMLElement` with Shadow DOM (no LitElement dependency). Bundle concatenated by `bash build.sh`.
+- **Theming**: HA CSS variables (`--primary-text-color`, `--card-background-color`, etc.).
+- **Localization**: IT / EN / ZH via `localStorage.selectedLanguage`.
+
+## Development
+
+```bash
+# Rebuild the card bundle (concatenates src/*.js and copies into the integration's www/)
+bash build.sh
+
+# The integration reloads are HA-side: restart HA or call the "Reload" action
+# on the integration from Developer Tools → YAML configuration.
+```
+
+Plan doc for the v2.0 architecture: [`docs/PLAN-integration-v2.md`](docs/PLAN-integration-v2.md).
 
 ## License
 

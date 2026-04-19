@@ -1,0 +1,66 @@
+irrigation_by_seconds:
+  name: Irrigation By Seconds
+  description: >-
+    Open the given valve, wait N seconds, then close it. The timer runs server-side
+    inside Home Assistant, so it works regardless of the valve firmware's own auto-off
+    behaviour (useful for devices such as the Tuya _TZE200_a7sghmms whose native
+    duration timer is unreliable under ZHA).
+  fields:
+    switch_entity:
+      name: Valve
+      description: The switch entity that controls the irrigation valve.
+      required: true
+      selector:
+        entity:
+          domain: switch
+    seconds:
+      name: Seconds
+      description: How long to keep the valve open, in seconds.
+      required: true
+      example: 60
+      selector:
+        number:
+          min: 1
+          max: 43200
+          unit_of_measurement: s
+          mode: box
+
+irrigation_by_liters:
+  name: Irrigation By Liters
+  description: >-
+    Open the given valve, monitor the device's _summation_delivered sensor, and
+    close the valve when the configured volume has been delivered. A safety
+    timeout guarantees the valve is closed even if the flow sensor gets stuck.
+  fields:
+    switch_entity:
+      name: Valve
+      description: The switch entity that controls the irrigation valve.
+      required: true
+      selector:
+        entity:
+          domain: switch
+    liters:
+      name: Liters
+      description: Target volume to deliver, in liters.
+      required: true
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 10000
+          unit_of_measurement: L
+          mode: box
+    timeout_seconds:
+      name: Safety timeout
+      description: >-
+        Maximum time the valve is allowed to stay open before it is forcibly
+        closed, regardless of whether the target volume has been reached.
+        Defaults to 3600 (1 hour).
+      required: false
+      default: 3600
+      selector:
+        number:
+          min: 60
+          max: 86400
+          unit_of_measurement: s
+          mode: box

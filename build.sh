@@ -18,4 +18,13 @@ for f in src/*.js; do
   cat "$f" >> "$OUTFILE"
 done
 
+# Copy the bundle into the integration's www/ so it can be served by the
+# custom_components.tuya_irrigation integration and auto-registered as a
+# Lovelace resource.
+INTG_WWW="custom_components/tuya_irrigation/www"
+if [ -d "$INTG_WWW" ]; then
+  cp "$OUTFILE" "$INTG_WWW/$OUTFILE"
+  echo "Copied $OUTFILE → $INTG_WWW/"
+fi
+
 echo "Built $OUTFILE ($(wc -c < "$OUTFILE") bytes, $(ls src/*.js | wc -l) card(s))"

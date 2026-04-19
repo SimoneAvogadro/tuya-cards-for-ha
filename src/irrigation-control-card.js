@@ -1,7 +1,8 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
- * v1.8.0 — Compactness improvements (no header border, inline empty history, conditional divider)
+ * v2.0.0 — Delegates open/wait/close to the tuya_irrigation custom integration (server-side timer).
+ *          Cycles/interval scheduling UI is hidden; the DOM is kept for future re-enablement.
  */
 
 // ── i18n ──
@@ -21,6 +22,7 @@ const I18N = {
     editorNameHint: "Lascia vuoto per usare il nome del dispositivo",
     configError: "Seleziona un dispositivo irrigazione nella configurazione",
     defaultName: "Irrigazione",
+    integrationMissing: "Installa l'integrazione Tuya Irrigation per abilitare il controllo",
     cardDesc: "Card compatta per valvole irrigazione Tuya con timer, pianificazione e storico",
   },
   en: {
@@ -38,6 +40,7 @@ const I18N = {
     editorNameHint: "Leave empty to use device name",
     configError: "Select an irrigation device in the configuration",
     defaultName: "Irrigation",
+    integrationMissing: "Install the Tuya Irrigation integration to enable control",
     cardDesc: "Compact card for Tuya irrigation valves with timer, scheduling and history",
   },
   zh: {
@@ -55,6 +58,7 @@ const I18N = {
     editorNameHint: "留空使用设备名称",
     configError: "请在配置中选择灌溉设备",
     defaultName: "灌溉",
+    integrationMissing: "请安装 Tuya Irrigation 集成以启用控制",
     cardDesc: "适用于涂鸦灌溉阀的紧凑卡片，含定时、计划和历史记录",
   },
 };
@@ -178,7 +182,9 @@ class IrrigationControlCard extends HTMLElement {
     const old = this._hass; this._hass = hass;
     if (old && this._weStarted && this._timerState === "running") {
       if (old.states[this._entities.switch]?.state === "on" && hass.states[this._entities.switch]?.state !== "on") {
-        this._stopCountdown(); this._timerState = "paused"; this._weStarted = false;
+        // v2.0.0: the integration closed the valve (timer expired or stop pressed).
+        // Reset the UI to idle instead of "paused" — there is nothing to resume.
+        this._stopCountdown(); this._timerState = "idle"; this._weStarted = false; this._userEditedTempo = false;
       }
     }
     if (this._timerState === "idle") this._syncFromEntities();
@@ -220,12 +226,20 @@ class IrrigationControlCard extends HTMLElement {
     this._render();
   }
 
+  // v2.0.0: irrigation actions delegate to the tuya_irrigation integration.
+  // The integration runs the timer/volume loop server-side, so the valve is
+  // reliably closed even when this card is not open in a browser.
+  _integrationAvailable() {
+    return !!(this._hass?.services?.tuya_irrigation?.irrigation_by_seconds);
+  }
+
   async _startLitri() {
-    const v = this._inputLitri; if (v <= 0) return; const e = this._entities;
-    if (e.mode) await this._svc("select", "select_option", { entity_id: e.mode, option: "Capacity" });
-    if (e.target) await this._svc("number", "set_value", { entity_id: e.target, value: v });
-    if (e.cycles) await this._svc("number", "set_value", { entity_id: e.cycles, value: 1 });
-    await this._svc("switch", "turn_on", { entity_id: e.switch });
+    const v = this._inputLitri; if (v <= 0) return;
+    if (!this._integrationAvailable()) { console.warn("[irrigation-control-card] tuya_irrigation integration not installed"); return; }
+    await this._svc("tuya_irrigation", "irrigation_by_liters", {
+      switch_entity: this._entities.switch,
+      liters: v,
+    });
   }
   async _stopLitri() { await this._svc("switch", "turn_off", { entity_id: this._entities.switch }); }
 
@@ -236,24 +250,27 @@ class IrrigationControlCard extends HTMLElement {
   }
   async _startTimerIrr() {
     const tot = this._inputMin * 60 + this._inputSec; if (tot <= 0) return;
-    this._totalSec = tot; this._remainingSec = tot; const e = this._entities;
-    if (e.mode) await this._svc("select", "select_option", { entity_id: e.mode, option: "Duration" });
-    if (e.target) await this._svc("number", "set_value", { entity_id: e.target, value: tot });
-    if (e.cycles) await this._svc("number", "set_value", { entity_id: e.cycles, value: 1 });
-    await this._svc("switch", "turn_on", { entity_id: e.switch });
+    if (!this._integrationAvailable()) { console.warn("[irrigation-control-card] tuya_irrigation integration not installed"); return; }
+    this._totalSec = tot; this._remainingSec = tot;
+    await this._svc("tuya_irrigation", "irrigation_by_seconds", {
+      switch_entity: this._entities.switch,
+      seconds: tot,
+    });
+    // Client-side countdown is for visual feedback only; the actual close
+    // is handled server-side by the integration.
     this._weStarted = true; this._timerState = "running"; this._startCountdown(); this._render();
   }
   async _pauseTimerIrr() {
+    // Pausing an integration-managed task is not resumable: pressing the
+    // running button just fires turn_off, which triggers the integration's
+    // finally block and closes the valve cleanly. We treat this as a full stop.
     await this._svc("switch", "turn_off", { entity_id: this._entities.switch });
-    this._stopCountdown(); this._timerState = "paused"; this._weStarted = false; this._render();
+    this._resetTimer();
   }
   async _resumeTimerIrr() {
-    if (this._remainingSec <= 0) { this._resetTimer(); return; } const e = this._entities;
-    if (e.mode) await this._svc("select", "select_option", { entity_id: e.mode, option: "Duration" });
-    if (e.target) await this._svc("number", "set_value", { entity_id: e.target, value: this._remainingSec });
-    if (e.cycles) await this._svc("number", "set_value", { entity_id: e.cycles, value: 1 });
-    await this._svc("switch", "turn_on", { entity_id: e.switch });
-    this._weStarted = true; this._timerState = "running"; this._startCountdown(); this._render();
+    // No-op: with the integration in charge, "paused" state is effectively
+    // "stopped". Starting a new irrigation requires pressing play again.
+    this._resetTimer();
   }
 
   _startCountdown() {
@@ -391,6 +408,11 @@ ha-card{overflow:hidden}
 .pw{height:3px;border-radius:2px;background:var(--bd);margin-top:6px;overflow:hidden;opacity:0;transition:opacity .2s}.pw.vi{opacity:1}
 .pb{height:100%;border-radius:2px;background:var(--accent);transition:width .3s linear}
 .rp{display:grid;grid-template-rows:0fr;transition:grid-template-rows .25s ease,margin-top .2s;margin-top:0}.rp>*{overflow:hidden}.rp.vi{grid-template-rows:1fr;margin-top:12px}
+/* v2.0.0: Cycles / interval / repeats UI temporarily hidden. The DOM + event
+   handlers are kept intact so the feature can be re-enabled as soon as the
+   tuya_irrigation integration gains scheduling support. To re-enable, remove
+   the next line. */
+.rp{display:none !important}
 .sh{display:flex;align-items:center;justify-content:space-between}
 .st{font-size:13px;font-weight:500;color:var(--ts)}
 .to{width:44px;height:24px;border-radius:12px;background:var(--bd);cursor:pointer;position:relative;transition:background .25s}.to.on{background:var(--accent)}
@@ -420,6 +442,8 @@ ha-card{overflow:hidden}
 .detail-val{font-size:13px;font-weight:500;color:var(--tm);font-family:monospace}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 input[type=number]{-moz-appearance:textfield}
+.intg-missing{background:rgba(226,85,85,.12);color:var(--danger);border:1px solid rgba(226,85,85,.3);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;text-align:center;display:none}
+.intg-missing.vi{display:block}
 </style>
 <ha-card>
   <div class="ch">
@@ -433,6 +457,7 @@ input[type=number]{-moz-appearance:textfield}
     </div>
   </div>
   <div class="cb">
+    <div class="intg-missing ${this._integrationAvailable()?"":"vi"}" id="intg-missing">${t("integrationMissing")}</div>
     <div class="sc">
       <div class="ar">
         <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>${t("liters")}</button>
@@ -506,6 +531,7 @@ input[type=number]{-moz-appearance:textfield}
       rp: q(".rp"), sto: $("sto"), schedGrid: $("sched-grid"),
       svDisp: q(".sv"), ivHh: $("iv-hh"), ivMm: $("iv-mm"),
       histEmptyInline: $("hist-empty-inline"), histData: $("hist-data"), divider: $("divider"),
+      intgMissing: $("intg-missing"),
       hv: q(".hv"), hlb: q(".hlb"), htx: q(".htx"),
       expBtn: $("hexp"), detailPanel: q(".detail-panel"),
       dvStart: $("dv-start"), dvEnd: $("dv-end"),
@@ -600,6 +626,9 @@ input[type=number]{-moz-appearance:textfield}
     const pP = timerActive && this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0;
     if (el.bar) el.bar.style.width = pP + "%";
 
+    // ── Integration availability banner ──
+    this._cls(el.intgMissing, "vi", !this._integrationAvailable());
+
     // ── Repeats (show/hide via CSS) ──
     const modeOpen = this._mode !== null;
     this._cls(el.rp, "vi", modeOpen);
@@ -656,4 +685,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v1.8.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.0.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

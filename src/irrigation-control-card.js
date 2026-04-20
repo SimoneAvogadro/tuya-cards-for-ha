@@ -15,7 +15,7 @@ const I18N = {
     lastIrrigation: "Ultima irrigazione", duration: "Durata",
     start: "Inizio", end: "Fine", noRecent: "Nessuna irrigazione recente", none: "nessuna",
     now: "adesso", minAgo: "${m} min fa", hoursAgo: "${h}h ${m}m fa",
-    atSep: " alle ",
+    atSep: " alle ", today: "oggi",
     editorDevice: "Dispositivo irrigazione", editorSelect: "— Seleziona —",
     editorHint: "Mostra solo i dispositivi con tutte le entità irrigazione",
     editorNoDevice: "Nessun dispositivo irrigazione compatibile",
@@ -34,7 +34,7 @@ const I18N = {
     lastIrrigation: "Last irrigation", duration: "Duration",
     start: "Start", end: "End", noRecent: "No recent irrigation", none: "none",
     now: "just now", minAgo: "${m} min ago", hoursAgo: "${h}h ${m}m ago",
-    atSep: " at ",
+    atSep: " at ", today: "today",
     editorDevice: "Irrigation device", editorSelect: "— Select —",
     editorHint: "Shows only devices with all irrigation entities",
     editorNoDevice: "No compatible irrigation device found",
@@ -53,7 +53,7 @@ const I18N = {
     lastIrrigation: "上次灌溉", duration: "持续时间",
     start: "开始", end: "结束", noRecent: "无近期灌溉记录", none: "无",
     now: "刚刚", minAgo: "${m}分钟前", hoursAgo: "${h}小时${m}分钟前",
-    atSep: " ",
+    atSep: " ", today: "今天",
     editorDevice: "灌溉设备", editorSelect: "— 选择 —",
     editorHint: "仅显示具有所有灌溉实体的设备",
     editorNoDevice: "未找到兼容的灌溉设备",
@@ -325,7 +325,7 @@ class IrrigationControlCard extends HTMLElement {
       date.getFullYear() === now.getFullYear() &&
       date.getMonth() === now.getMonth() &&
       date.getDate() === now.getDate();
-    if (sameDay) return time;
+    if (sameDay) return `${_t(this._hass, "today")} ${time}`;
     const diffDays = (now.getTime() - date.getTime()) / 86400000;
     const at = _t(this._hass, "atSep");
     if (diffDays >= 0 && diffDays < 7) {
@@ -342,13 +342,9 @@ class IrrigationControlCard extends HTMLElement {
     const n = Number(v) || 0;
     return n.toLocaleString(_numLocale(this._hass), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " L";
   }
-  _fmtVolShort(v) {
+  _fmtVolShortNum(v) {
     const n = Number(v) || 0;
-    return n.toLocaleString(_numLocale(this._hass), { minimumFractionDigits: 0, maximumFractionDigits: 1 }) + " L";
-  }
-  _buildHistSummary(ago, smart, vol) {
-    if (ago === null) return `: ${_t(this._hass, "none")}`;
-    return `: ${smart}, ${this._fmtVolShort(vol)}`;
+    return n.toLocaleString(_numLocale(this._hass), { minimumFractionDigits: 0, maximumFractionDigits: 1 });
   }
   _p2(n) { return String(Math.round(n)).padStart(2, "0"); }
 
@@ -479,10 +475,12 @@ ha-card{overflow:hidden}
 .exp-btn{background:none;border:1px solid var(--bd);border-radius:4px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--th);font-size:14px;font-family:monospace;transition:all .15s;flex-shrink:0;margin-left:6px;padding:0;line-height:1}
 .exp-btn:hover{color:var(--ts);border-color:var(--ts)}
 .exp-btn.open{color:var(--blue-text);border-color:rgba(74,144,217,.4)}
-.hist-compact{display:flex;align-items:center;gap:6px;padding:2px 0;min-height:24px}
+.hist-compact{display:flex;align-items:center;gap:8px;padding:2px 0;min-height:24px}
 .hist-compact-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);flex-shrink:0}
-.hist-summary{flex:1;min-width:0;font-size:12px;color:var(--tm);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hist-summary.none{color:var(--ts);font-weight:400;font-style:italic}
+.hist-when{flex:1;min-width:0;font-size:12px;color:var(--tm);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-when.none{color:var(--ts);font-weight:400;font-style:italic}
+.hist-vol{font-size:12px;color:var(--tm);font-weight:500;white-space:nowrap;flex-shrink:0}
+.hist-vol-label{color:var(--th);font-weight:400}
 .hist-detail{margin-top:6px}
 .detail-row{display:flex;align-items:center;gap:8px;padding:4px 0 0 48px}
 .detail-label{font-size:11px;color:var(--th);min-width:36px}
@@ -543,7 +541,8 @@ input[type=number]{-moz-appearance:textfield}
     <div class="sc" style="margin-bottom:0">
       <div class="hist-compact" id="hist-compact" style="display:${this._histExpanded&&ago!==null?"none":"flex"}">
         <span class="hist-compact-label">${t("lastIrrigation")}</span>
-        <span class="hist-summary ${ago===null?"none":""}" id="hist-summary">${this._buildHistSummary(ago, this._smartDate(this._lc(e.last_duration)), vol)}</span>
+        <span class="hist-when ${ago===null?"none":""}" id="hist-when">${ago===null?": "+t("none"):this._smartDate(this._lc(e.last_duration))}</span>
+        <span class="hist-vol" id="hist-vol" style="display:${ago!==null?"inline":"none"}"><span class="hist-vol-label">${t("liters")}:</span> <span id="hist-vol-val">${this._fmtVolShortNum(vol)}</span></span>
         <button class="exp-btn" id="hexp-compact" style="display:${ago!==null?"flex":"none"}">+</button>
       </div>
       <div class="hist-expanded" id="hist-expanded" style="display:${this._histExpanded&&ago!==null?"block":"none"}">
@@ -583,7 +582,8 @@ input[type=number]{-moz-appearance:textfield}
       rp: q(".rp"), sto: $("sto"), schedGrid: $("sched-grid"),
       svDisp: q(".sv"), ivHh: $("iv-hh"), ivMm: $("iv-mm"),
       histCompact: $("hist-compact"), histExpanded: $("hist-expanded"),
-      histSummary: $("hist-summary"), histDetail: $("hist-detail"),
+      histWhen: $("hist-when"), histVol: $("hist-vol"), histVolVal: $("hist-vol-val"),
+      histDetail: $("hist-detail"),
       divider: $("divider"),
       intgMissing: $("intg-missing"),
       hv: q(".hv"), hlb: q(".hlb"), htx: q(".htx"),
@@ -702,12 +702,14 @@ input[type=number]{-moz-appearance:textfield}
     const smart = this._smartDate(this._lc(e.last_duration));
     if (el.histCompact) el.histCompact.style.display = showExpanded ? "none" : "flex";
     if (el.histExpanded) el.histExpanded.style.display = showExpanded ? "block" : "none";
-    if (el.histSummary) {
-      this._txt(el.histSummary, this._buildHistSummary(ago, smart, vol));
-      this._cls(el.histSummary, "none", !hasData);
+    if (el.histWhen) {
+      this._txt(el.histWhen, hasData ? smart : ": " + t("none"));
+      this._cls(el.histWhen, "none", !hasData);
     }
+    if (el.histVol) el.histVol.style.display = hasData ? "inline" : "none";
     if (el.expBtnCompact) el.expBtnCompact.style.display = hasData ? "flex" : "none";
     if (hasData) {
+      this._txt(el.histVolVal, this._fmtVolShortNum(vol));
       this._txt(el.hv, this._fmtVol(vol));
       this._txt(el.hlb, t("duration") + ": " + this._fd(dur));
       this._txt(el.htx, ago);

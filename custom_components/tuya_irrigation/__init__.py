@@ -23,6 +23,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.setup import async_when_setup
 
 from .const import (
     ATTR_LITERS,
@@ -95,7 +96,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
-    """Serve the bundle via a static path and auto-register it as a Lovelace module."""
+    """Serve the bundle via a static path and auto-register it as a Lovelace module.
+
+    The static path can be registered during our own async_setup, but the
+    Lovelace resource registration has to wait until the lovelace component
+    itself is set up, hence the async_when_setup deferral.
+    """
     www_dir = Path(__file__).parent / "www"
     try:
         await hass.http.async_register_static_paths(
@@ -104,16 +110,33 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     except RuntimeError:
         _LOGGER.debug("Static path %s already registered", URL_BASE)
 
+    async_when_setup(hass, "lovelace", _async_register_lovelace_resource)
+
+
+async def _async_register_lovelace_resource(
+    hass: HomeAssistant, _component: str
+) -> None:
+    """Register the card bundle as a Lovelace module resource.
+
+    Invoked after the lovelace component has finished setting up, so
+    hass.data["lovelace"] is guaranteed to be the LovelaceData dataclass
+    (attributes: resource_mode, resources, dashboards, ...).
+    """
     lovelace = hass.data.get("lovelace")
     if lovelace is None:
-        _LOGGER.debug("Lovelace not ready; skipping auto-registration of card resource")
+        _LOGGER.warning(
+            "Lovelace data missing after setup — cannot auto-register %s",
+            URL_BASE,
+        )
         return
 
-    mode = getattr(lovelace, "mode", None)
+    # Recent HA versions expose `resource_mode`; older ones exposed `mode`.
+    mode = getattr(lovelace, "resource_mode", None) or getattr(lovelace, "mode", None)
     resources = getattr(lovelace, "resources", None)
     if mode != "storage" or resources is None:
-        _LOGGER.info(
-            "Lovelace is in '%s' mode; add '%s/tuya-cards.js' as a module resource manually",
+        _LOGGER.warning(
+            "Lovelace is in '%s' mode; add '%s/tuya-cards.js' as a module "
+            "resource manually under Settings → Dashboards → Resources",
             mode,
             URL_BASE,
         )
@@ -150,12 +173,12 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
                 await resources.async_update_item(
                     found_id, {"res_type": "module", "url": versioned_url}
                 )
-                _LOGGER.info("Updated Lovelace resource: %s", versioned_url)
+                _LOGGER.warning("Updated Lovelace resource: %s", versioned_url)
             else:
                 await resources.async_create_item(
                     {"res_type": "module", "url": versioned_url}
                 )
-                _LOGGER.info("Registered Lovelace resource: %s", versioned_url)
+                _LOGGER.warning("Registered Lovelace resource: %s", versioned_url)
         except Exception as err:  # pragma: no cover - defensive
             _LOGGER.warning(
                 "Could not register Lovelace resource %s: %s", versioned_url, err

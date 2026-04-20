@@ -12,17 +12,24 @@ The **cards** auto-discover compatible devices from a single entity via suffix c
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services | v2.0.0 |
-| `irrigation-control-card` | Lovelace card driving the services above | v2.0.0 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services | v2.0.1 |
+| `irrigation-control-card` | Lovelace card driving the services above | v2.0.1 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
 ## Installation (HACS)
 
 1. Open HACS in Home Assistant.
 2. Three-dot menu → **Custom repositories** → add this repository URL, category **Integration**.
-3. Search "Tuya Irrigation" → **Install**.
-4. **Restart Home Assistant** (required after integration install).
-5. The card bundle is served automatically by the integration and auto-registered as a Lovelace resource (only in *storage* mode, the default). Hard-refresh your browser (Ctrl+Shift+R).
+3. **Immediately** search "Tuya Irrigation" in HACS → open it → **Download** the latest version. Do not restart Home Assistant before this step — see note below.
+4. Add **one line** to your `configuration.yaml`:
+   ```yaml
+   tuya_irrigation:
+   ```
+   The integration has no config flow — it's loaded via YAML. Without this line, HACS copies the files but the integration is never set up (no services, no card bundle served).
+5. **Restart Home Assistant**.
+6. The card bundle is served automatically by the integration and auto-registered as a Lovelace resource (only in *storage* mode, the default). Hard-refresh your browser (Ctrl+Shift+R). You'll see `Registered Lovelace resource: /tuya_irrigation/tuya-cards.js?v=2.0.1` in the HA logs on first boot — if not (e.g. dashboard in YAML mode), add that URL manually under Settings → Dashboards → Resources (type: module).
+
+> ⚠️ **Do not restart between steps 2 and 3.** HACS 2.x removes custom repositories that are registered but not yet downloaded during every startup (it logs `Unregister stale custom repository`). If you add the repo and restart before downloading, the repo disappears from the custom list and you have to add it again. Click **Download** first — from then on the repo persists across restarts.
 
 ### Upgrading from v1.x
 
@@ -31,7 +38,7 @@ v1.x was distributed as a pure dashboard (Lovelace-only) HACS repo. v2.0.0 is no
 1. Remove the old Lovelace resource pointing to `/hacsfiles/tuya-cards-for-ha/tuya-cards.js` or `/local/tuya-cards.js`.
 2. HACS → remove the old installation.
 3. Re-add this repo as **Integration** and install (see above).
-4. After HA restart, the new resource `/tuya_irrigation/tuya-cards.js?v=2.0.0` will be registered automatically.
+4. After HA restart, the new resource `/tuya_irrigation/tuya-cards.js?v=2.0.1` will be registered automatically.
 5. Existing `custom:irrigation-control-card` YAML keeps working. The cycles/interval UI is hidden for now (planned re-enablement once the integration supports scheduling).
 
 ### Manual install (YAML mode or no HACS)

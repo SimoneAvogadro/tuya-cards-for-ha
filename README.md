@@ -224,6 +224,21 @@ bash build.sh
 
 Plan doc for the v2.0 architecture: [`docs/PLAN-integration-v2.md`](docs/PLAN-integration-v2.md).
 
+---
+
+## ⚠️ Heads-up: restarts and shutdowns close open valves
+
+This is intentional and you should be aware of it before restarting Home Assistant during an irrigation run.
+
+**Any graceful shutdown of HA closes every valve this integration has opened** — whether you triggered it yourself (Settings → System → Restart, or `ha core restart`), or the OS triggered it (UPS low-battery poweroff, host reboot, HAOS update). A mid-irrigation restart does **not** resume when HA comes back: the session is lost and water stops. This is the safe default — the alternative (leaving a valve open across a restart with nothing watching the timer) would be much worse for an irrigation system on a smart home that might not come back online for minutes.
+
+Concretely, if you restart HA with, say, 20 minutes left on a 30-minute irrigation:
+
+- ✅ The valve closes cleanly as HA shuts down (you'll see `Shutdown safety: closing open irrigation valve …` in the log).
+- ❌ After HA restarts, irrigation does **not** auto-resume. The remaining 20 minutes are not delivered. You'll need to start a new run.
+
+Plan long irrigations around known maintenance windows, or run them via automations that you can simply re-trigger after a restart. See the technical details of the two-pass close sweep under [Behavior notes → Shutdown safety](#shutdown-safety).
+
 ## License
 
 [MIT](LICENSE)

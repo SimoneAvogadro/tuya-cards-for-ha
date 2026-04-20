@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configura Tuya Irrigation",
+        "description": "Clicca Invia per abilitare l'integrazione Tuya Irrigation. Registra i servizi `irrigation_by_seconds` e `irrigation_by_liters` e pubblica automaticamente il bundle delle card Lovelace. Non c'è nulla da configurare qui."
+      }
+    },
+    "abort": {
+      "already_configured": "Tuya Irrigation è già configurato."
+    }
+  }
+}

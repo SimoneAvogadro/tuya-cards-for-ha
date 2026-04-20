@@ -1,11 +1,11 @@
 {
   "domain": "tuya_irrigation",
   "name": "Tuya Irrigation",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "documentation": "https://github.com/SimoneAvogadro/tuya-cards-for-ha",
   "issue_tracker": "https://github.com/SimoneAvogadro/tuya-cards-for-ha/issues",
   "dependencies": ["frontend", "http", "lovelace"],
   "codeowners": ["@SimoneAvogadro"],
   "iot_class": "local_push",
-  "config_flow": false
+  "config_flow": true
 }

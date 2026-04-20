@@ -18,11 +18,11 @@ from pathlib import Path
 import voluptuous as vol
 
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers.typing import ConfigType
 from homeassistant.setup import async_when_setup
 
 from .const import (
@@ -42,8 +42,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
-
 SECONDS_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_SWITCH_ENTITY): cv.entity_id,
@@ -62,8 +60,8 @@ LITERS_SCHEMA = vol.Schema(
 )
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the Tuya Irrigation integration."""
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up the Tuya Irrigation integration from a config entry."""
     # Per-switch asyncio.Task registry. A new call for the same switch
     # cancels the previous task; the cancelled task's finally block checks
     # task identity before touching the valve, so the new call is not
@@ -90,15 +88,32 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     "Timed out waiting for irrigation tasks to finish during shutdown"
                 )
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop)
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop)
+    )
     _LOGGER.info("Tuya Irrigation v%s integration loaded", VERSION)
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Cancel running irrigation tasks and unregister services on unload."""
+    domain_data = hass.data.get(DOMAIN, {})
+    active_tasks: dict[str, asyncio.Task] = domain_data.get("active_tasks", {})
+    for task in list(active_tasks.values()):
+        if not task.done():
+            task.cancel()
+    hass.services.async_remove(DOMAIN, SERVICE_IRRIGATION_BY_SECONDS)
+    hass.services.async_remove(DOMAIN, SERVICE_IRRIGATION_BY_LITERS)
+    hass.data.pop(DOMAIN, None)
+    # Static path and Lovelace resource stay registered — HA doesn't expose
+    # a clean way to undo them, and leaving them idle is harmless.
     return True
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
     """Serve the bundle via a static path and auto-register it as a Lovelace module.
 
-    The static path can be registered during our own async_setup, but the
+    The static path can be registered during async_setup_entry, but the
     Lovelace resource registration has to wait until the lovelace component
     itself is set up, hence the async_when_setup deferral.
     """

@@ -13,9 +13,12 @@ tuya-cards-for-ha/
 ├── custom_components/
 │   └── tuya_irrigation/
 │       ├── __init__.py           ← services + static path + Lovelace auto-reg
+│       ├── config_flow.py        ← minimal single-entry config flow (one-click enable)
 │       ├── const.py
 │       ├── manifest.json
 │       ├── services.yaml
+│       ├── strings.json          ← config-flow UI strings (EN source)
+│       ├── translations/         ← per-language overrides (en, it)
 │       └── www/
 │           └── tuya-cards.js     ← built bundle (copied by build.sh — DO NOT edit)
 ├── docs/
@@ -39,9 +42,17 @@ bash build.sh
 
 No dependencies. The script concatenates a header + all `src/*.js` files into `tuya-cards.js`, then copies the result into `custom_components/tuya_irrigation/www/` so the integration can serve it. Always run after modifying card sources.
 
+## Integration lifecycle
+
+Config-flow-only, singleton entry. Enabled from Settings → Devices & Services → Add Integration → "Tuya Irrigation" (one click, no inputs). No `configuration.yaml` entry.
+
+- `async_setup_entry(hass, entry)` in `__init__.py` creates the per-switch task registry, registers the static path `/tuya_irrigation`, defers Lovelace resource registration via `async_when_setup("lovelace", …)`, and registers the two services.
+- `async_unload_entry(hass, entry)` cancels running tasks, removes services, and clears `hass.data[DOMAIN]`. Static path and Lovelace resource persist for the lifetime of the HA process (HA exposes no clean way to undo them).
+- The config flow in `config_flow.py` calls `async_set_unique_id(DOMAIN) + _abort_if_unique_id_configured()` so only one entry can exist.
+
 ## Integration services
 
-Registered in `custom_components/tuya_irrigation/__init__.py`:
+Registered in `_async_register_services` (called from `async_setup_entry`):
 
 - `tuya_irrigation.irrigation_by_seconds(switch_entity, seconds)` — turn on, `asyncio.sleep(seconds)`, turn off. Cancellation-safe via per-switch task registry.
 - `tuya_irrigation.irrigation_by_liters(switch_entity, liters, timeout_seconds?)` — turn on, monitor `sensor.<prefix>_summation_delivered` via `async_track_state_change_event`, turn off when target reached or timeout.

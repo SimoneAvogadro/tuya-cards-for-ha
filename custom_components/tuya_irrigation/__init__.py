@@ -67,26 +67,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # task identity before touching the valve, so the new call is not
     # disturbed by the old one shutting down.
     active_tasks: dict[str, asyncio.Task] = {}
-    hass.data.setdefault(DOMAIN, {})["active_tasks"] = active_tasks
+    # Every switch entity this integration has ever driven during this HA
+    # session. Used as the authoritative list to sweep on shutdown/unload,
+    # so a valve left open (e.g. because a prior turn_off call failed or a
+    # task was killed before its finally ran) still gets closed.
+    managed_switches: set[str] = set()
+    hass.data.setdefault(DOMAIN, {}).update(
+        {"active_tasks": active_tasks, "managed_switches": managed_switches}
+    )
 
     await _async_register_frontend(hass)
-    _async_register_services(hass, active_tasks)
+    _async_register_services(hass, active_tasks, managed_switches)
 
     async def _async_stop(event) -> None:
-        """Cancel all running irrigation tasks and wait briefly for cleanup."""
-        tasks = list(active_tasks.values())
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        if tasks:
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*tasks, return_exceptions=True), timeout=5
-                )
-            except asyncio.TimeoutError:
-                _LOGGER.warning(
-                    "Timed out waiting for irrigation tasks to finish during shutdown"
-                )
+        """On HA shutdown, close every valve this integration opened."""
+        await _async_close_all_valves(hass, active_tasks, managed_switches)
 
     entry.async_on_unload(
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop)
@@ -96,18 +91,69 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Cancel running irrigation tasks and unregister services on unload."""
+    """Close open valves, cancel running tasks, unregister services."""
     domain_data = hass.data.get(DOMAIN, {})
     active_tasks: dict[str, asyncio.Task] = domain_data.get("active_tasks", {})
-    for task in list(active_tasks.values()):
-        if not task.done():
-            task.cancel()
+    managed_switches: set[str] = domain_data.get("managed_switches", set())
+    await _async_close_all_valves(hass, active_tasks, managed_switches)
     hass.services.async_remove(DOMAIN, SERVICE_IRRIGATION_BY_SECONDS)
     hass.services.async_remove(DOMAIN, SERVICE_IRRIGATION_BY_LITERS)
     hass.data.pop(DOMAIN, None)
     # Static path and Lovelace resource stay registered — HA doesn't expose
     # a clean way to undo them, and leaving them idle is harmless.
     return True
+
+
+async def _async_close_all_valves(
+    hass: HomeAssistant,
+    active_tasks: dict[str, asyncio.Task],
+    managed_switches: set[str],
+) -> None:
+    """Cancel running timers and force-close any valve this integration ever opened.
+
+    Two-pass design:
+      1. Cancel active tasks so their own `finally: turn_off` runs and they
+         don't race us by re-opening a valve we're about to close.
+      2. Explicit safety sweep: for each switch we have ever managed, if HA
+         still reports it 'on', call switch.turn_off directly. Covers the
+         cases where the task's finally got cut short or a previous turn_off
+         silently failed.
+    """
+    # Pass 1: cancel active timers, wait briefly for their finally blocks.
+    tasks = list(active_tasks.values())
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    if tasks:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True), timeout=5
+            )
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Timed out waiting for irrigation tasks to finish — "
+                "falling through to explicit valve close"
+            )
+
+    # Pass 2: explicit close for every managed valve still reporting 'on'.
+    for switch_entity in list(managed_switches):
+        state = hass.states.get(switch_entity)
+        if state is None or state.state != "on":
+            continue
+        _LOGGER.warning(
+            "Shutdown safety: closing open irrigation valve %s", switch_entity
+        )
+        try:
+            await hass.services.async_call(
+                "switch",
+                "turn_off",
+                {"entity_id": switch_entity},
+                blocking=True,
+            )
+        except Exception as err:  # pragma: no cover - defensive
+            _LOGGER.error(
+                "Shutdown safety: failed to close %s: %s", switch_entity, err
+            )
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
@@ -201,7 +247,9 @@ async def _async_register_lovelace_resource(
 
 
 def _async_register_services(
-    hass: HomeAssistant, active_tasks: dict[str, asyncio.Task]
+    hass: HomeAssistant,
+    active_tasks: dict[str, asyncio.Task],
+    managed_switches: set[str],
 ) -> None:
     """Register the two irrigation services."""
 
@@ -311,6 +359,7 @@ def _async_register_services(
             return
 
         _cancel_existing(switch_entity)
+        managed_switches.add(switch_entity)
         # Create and register the task BEFORE any await, so the cancelled old
         # task (whose finally block will run during our first await) sees that
         # it is no longer the registered task and skips turning off the valve
@@ -343,6 +392,7 @@ def _async_register_services(
             return
 
         _cancel_existing(switch_entity)
+        managed_switches.add(switch_entity)
         task = hass.async_create_task(
             _run_liters(switch_entity, liters, timeout_seconds, summation_entity)
         )

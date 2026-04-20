@@ -12,8 +12,8 @@ The **cards** auto-discover compatible devices from a single entity via suffix c
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services | v2.0.2 |
-| `irrigation-control-card` | Lovelace card driving the services above | v2.0.2 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services | v2.1.0 |
+| `irrigation-control-card` | Lovelace card driving the services above | v2.1.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
 ## Installation (HACS)
@@ -23,7 +23,7 @@ The **cards** auto-discover compatible devices from a single entity via suffix c
 3. **Immediately** search "Tuya Irrigation" in HACS → open it → **Download** the latest version. Do not restart Home Assistant before this step — see note below.
 4. **Restart Home Assistant**.
 5. Settings → Devices & Services → **Add Integration** → search "Tuya Irrigation" → Submit (no inputs required).
-6. The card bundle is served automatically by the integration and auto-registered as a Lovelace resource (only in *storage* mode, the default). Hard-refresh your browser (Ctrl+Shift+R). You'll see `Registered Lovelace resource: /tuya_irrigation/tuya-cards.js?v=2.0.2` in the HA logs on first boot — if not (e.g. dashboard in YAML mode), add that URL manually under Settings → Dashboards → Resources (type: module).
+6. The card bundle is served automatically by the integration and auto-registered as a Lovelace resource (only in *storage* mode, the default). Hard-refresh your browser (Ctrl+Shift+R). You'll see `Registered Lovelace resource: /tuya_irrigation/tuya-cards.js?v=2.1.0` in the HA logs on first boot — if not (e.g. dashboard in YAML mode), add that URL manually under Settings → Dashboards → Resources (type: module).
 
 > ⚠️ **Do not restart between steps 2 and 3.** HACS 2.x removes custom repositories that are registered but not yet downloaded during every startup (it logs `Unregister stale custom repository`). If you add the repo and restart before downloading, the repo disappears from the custom list and you have to add it again. Click **Download** first — from then on the repo persists across restarts.
 
@@ -34,7 +34,7 @@ v1.x was distributed as a pure dashboard (Lovelace-only) HACS repo. v2.0.0 is no
 1. Remove the old Lovelace resource pointing to `/hacsfiles/tuya-cards-for-ha/tuya-cards.js` or `/local/tuya-cards.js`.
 2. HACS → remove the old installation.
 3. Re-add this repo as **Integration** and install (see above).
-4. After HA restart, the new resource `/tuya_irrigation/tuya-cards.js?v=2.0.2` will be registered automatically.
+4. After HA restart, the new resource `/tuya_irrigation/tuya-cards.js?v=2.1.0` will be registered automatically.
 5. Existing `custom:irrigation-control-card` YAML keeps working. The cycles/interval UI is hidden for now (planned re-enablement once the integration supports scheduling).
 
 ### Manual install (no HACS)
@@ -96,6 +96,17 @@ Example:
 - Calling a service on a switch that is already being irrigated **cancels** the previous task and starts a new one.
 - When a task is cancelled (or HA shuts down), its `finally` block still calls `switch.turn_off` — the valve will not be left open.
 - During a run, pressing the stop button on the card or calling `switch.turn_off` directly aborts the task and closes the valve cleanly.
+
+### Shutdown safety
+
+As long as HA shuts down gracefully (systemd stop, `ha core stop`, OS poweroff with supervisor, or a UPS-triggered shutdown that reaches HA), the integration guarantees every valve it has ever opened during the session is closed before the process exits:
+
+1. **Pass 1** — all running irrigation timer tasks are cancelled, so their own `finally: turn_off` can run.
+2. **Pass 2** — an explicit sweep iterates every switch the integration has driven in this session; any that HA still reports as `on` gets a direct `switch.turn_off` call. This covers the rare case where pass 1 got cut short or a previous turn-off silently failed.
+
+You'll see one `Shutdown safety: closing open irrigation valve <entity>` WARNING per valve in the HA log when this kicks in. No configuration needed.
+
+This does **not** cover a hard power loss (kernel panic, pulled plug with no UPS) where HA has no chance to run any cleanup. For that, the UPS + OS graceful shutdown is what saves you — the integration simply rides the OS signal.
 
 ---
 

@@ -59,6 +59,8 @@ Registered in `_async_register_services` (called from `async_setup_entry`):
 
 Both services cancel any previously-running task on the same switch. The cancelled task checks `active_tasks[switch] is my_task` in its `finally` before touching the valve, so the cancellation does not disturb the new task.
 
+Every service call also adds the switch entity to `managed_switches: set[str]` in `hass.data[DOMAIN]`. On `EVENT_HOMEASSISTANT_STOP` and on `async_unload_entry`, `_async_close_all_valves` runs a two-pass sweep: (1) cancel active timer tasks so their own `finally: turn_off` runs; (2) explicit `switch.turn_off` for every entity in `managed_switches` that HA still reports as `on`. Pass 2 is the safety net for the case where pass 1's cancellation was cut short or a prior turn-off silently failed. Logs one `Shutdown safety: closing open irrigation valve <entity>` WARNING per valve when it triggers.
+
 ## Card rules
 
 - **No LitElement** — pure HTMLElement with Shadow DOM only.

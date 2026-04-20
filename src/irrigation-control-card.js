@@ -15,6 +15,7 @@ const I18N = {
     lastIrrigation: "Ultima irrigazione", duration: "Durata",
     start: "Inizio", end: "Fine", noRecent: "Nessuna irrigazione recente", none: "nessuna",
     now: "adesso", minAgo: "${m} min fa", hoursAgo: "${h}h ${m}m fa",
+    atSep: " alle ",
     editorDevice: "Dispositivo irrigazione", editorSelect: "— Seleziona —",
     editorHint: "Mostra solo i dispositivi con tutte le entità irrigazione",
     editorNoDevice: "Nessun dispositivo irrigazione compatibile",
@@ -33,6 +34,7 @@ const I18N = {
     lastIrrigation: "Last irrigation", duration: "Duration",
     start: "Start", end: "End", noRecent: "No recent irrigation", none: "none",
     now: "just now", minAgo: "${m} min ago", hoursAgo: "${h}h ${m}m ago",
+    atSep: " at ",
     editorDevice: "Irrigation device", editorSelect: "— Select —",
     editorHint: "Shows only devices with all irrigation entities",
     editorNoDevice: "No compatible irrigation device found",
@@ -51,6 +53,7 @@ const I18N = {
     lastIrrigation: "上次灌溉", duration: "持续时间",
     start: "开始", end: "结束", noRecent: "无近期灌溉记录", none: "无",
     now: "刚刚", minAgo: "${m}分钟前", hoursAgo: "${h}小时${m}分钟前",
+    atSep: " ",
     editorDevice: "灌溉设备", editorSelect: "— 选择 —",
     editorHint: "仅显示具有所有灌溉实体的设备",
     editorNoDevice: "未找到兼容的灌溉设备",
@@ -306,7 +309,47 @@ class IrrigationControlCard extends HTMLElement {
     if (m < 60) return _tf(this._hass, "minAgo", { m });
     return _tf(this._hass, "hoursAgo", { h: Math.floor(m / 60), m: m % 60 });
   }
+
+  // Smart absolute date formatter for the compact "last irrigation" line.
+  //   today         → "10:35"
+  //   this week     → "Martedì 12 alle 10:35"
+  //   older, same year → "12 mar"
+  //   previous year(s) → "12 mar 2024"
+  _smartDate(date) {
+    if (!date || isNaN(date.getTime())) return null;
+    const now = new Date();
+    const locale = this._hass?.language || _i18nLang(this._hass);
+    const cap = (s) => s ? s.charAt(0).toLocaleUpperCase(locale) + s.slice(1) : s;
+    const time = date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+    const sameDay =
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate();
+    if (sameDay) return time;
+    const diffDays = (now.getTime() - date.getTime()) / 86400000;
+    const at = _t(this._hass, "atSep");
+    if (diffDays >= 0 && diffDays < 7) {
+      const wd = cap(date.toLocaleDateString(locale, { weekday: "long" }));
+      return `${wd} ${date.getDate()}${at}${time}`;
+    }
+    if (date.getFullYear() === now.getFullYear()) {
+      return cap(date.toLocaleDateString(locale, { day: "numeric", month: "short" }));
+    }
+    return cap(date.toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" }));
+  }
   _fd(s) { s = Math.round(s); if (s < 60) return `${s} s`; const m = Math.floor(s / 60), r = s % 60; if (m < 60) return r > 0 ? `${m}m ${r}s` : `${m} min`; return `${Math.floor(m / 60)}h ${m % 60}m`; }
+  _fmtVol(v) {
+    const n = Number(v) || 0;
+    return n.toLocaleString(_numLocale(this._hass), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " L";
+  }
+  _fmtVolShort(v) {
+    const n = Number(v) || 0;
+    return n.toLocaleString(_numLocale(this._hass), { minimumFractionDigits: 0, maximumFractionDigits: 1 }) + " L";
+  }
+  _buildHistSummary(ago, smart, vol) {
+    if (ago === null) return `: ${_t(this._hass, "none")}`;
+    return `: ${smart}, ${this._fmtVolShort(vol)}`;
+  }
   _p2(n) { return String(Math.round(n)).padStart(2, "0"); }
 
   _fmtLocalTime(val) {
@@ -429,14 +472,18 @@ ha-card{overflow:hidden}
 .sht{font-size:9px;color:var(--th);margin-top:4px;letter-spacing:.05em}
 .hrow{display:flex;align-items:center;gap:12px;padding:4px 0}
 .hi{width:36px;height:36px;border-radius:8px;background:var(--bd);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.hn{flex:1}
+.hn{flex:1;min-width:0}
 .hlb{font-size:12px;color:var(--th)}
 .hv{font-size:15px;font-weight:500;color:var(--tm)}
 .htx{font-size:11px;color:var(--th);white-space:nowrap;font-family:monospace}
 .exp-btn{background:none;border:1px solid var(--bd);border-radius:4px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--th);font-size:14px;font-family:monospace;transition:all .15s;flex-shrink:0;margin-left:6px;padding:0;line-height:1}
 .exp-btn:hover{color:var(--ts);border-color:var(--ts)}
 .exp-btn.open{color:var(--blue-text);border-color:rgba(74,144,217,.4)}
-.detail-panel{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s ease}.detail-panel>*{overflow:hidden}.detail-panel.vi{grid-template-rows:1fr}
+.hist-compact{display:flex;align-items:center;gap:6px;padding:2px 0;min-height:24px}
+.hist-compact-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);flex-shrink:0}
+.hist-summary{flex:1;min-width:0;font-size:12px;color:var(--tm);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-summary.none{color:var(--ts);font-weight:400;font-style:italic}
+.hist-detail{margin-top:6px}
 .detail-row{display:flex;align-items:center;gap:8px;padding:4px 0 0 48px}
 .detail-label{font-size:11px;color:var(--th);min-width:36px}
 .detail-val{font-size:13px;font-weight:500;color:var(--tm);font-family:monospace}
@@ -494,21 +541,26 @@ input[type=number]{-moz-appearance:textfield}
     </div>
     <div class="dv ${modeOpen?"vi":""}" id="divider"></div>
     <div class="sc" style="margin-bottom:0">
-      <div class="sl" id="hist-label">${t("lastIrrigation")}<span class="sl-inline" id="hist-empty-inline" style="display:${ago===null?"inline":"none"}">: ${t("none")}</span></div>
-      <div id="hist-data" style="display:${ago!==null?"block":"none"}">
+      <div class="hist-compact" id="hist-compact" style="display:${this._histExpanded&&ago!==null?"none":"flex"}">
+        <span class="hist-compact-label">${t("lastIrrigation")}</span>
+        <span class="hist-summary ${ago===null?"none":""}" id="hist-summary">${this._buildHistSummary(ago, this._smartDate(this._lc(e.last_duration)), vol)}</span>
+        <button class="exp-btn" id="hexp-compact" style="display:${ago!==null?"flex":"none"}">+</button>
+      </div>
+      <div class="hist-expanded" id="hist-expanded" style="display:${this._histExpanded&&ago!==null?"block":"none"}">
+        <div class="sl">${t("lastIrrigation")}</div>
         <div class="hrow">
           <div class="hi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--th)" stroke-width="2.2" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg></div>
           <div class="hn">
-            <div class="hv">${vol.toLocaleString(_numLocale(this._hass),{minimumFractionDigits:1,maximumFractionDigits:1})} L</div>
+            <div class="hv">${this._fmtVol(vol)}</div>
             <div class="hlb">${t("duration")}: ${this._fd(dur)}</div>
           </div>
           <span class="htx">${ago || ""}</span>
-          <button class="exp-btn ${this._histExpanded?"open":""}" id="hexp" style="display:${hasStEt?"flex":"none"}">${this._histExpanded?"\u2212":"+"}</button>
+          <button class="exp-btn open" id="hexp">\u2212</button>
         </div>
-        <div class="detail-panel ${this._histExpanded&&hasStEt?"vi":""}"><div>
+        <div class="hist-detail" id="hist-detail" style="display:${hasStEt?"block":"none"}">
           <div class="detail-row"><span class="detail-label">${t("start")}</span><span class="detail-val" id="dv-start">${stLocal || ""}</span></div>
           <div class="detail-row"><span class="detail-label">${t("end")}</span><span class="detail-val" id="dv-end">${etLocal || ""}</span></div>
-        </div></div>
+        </div>
       </div>
     </div>
   </div>
@@ -530,10 +582,12 @@ input[type=number]{-moz-appearance:textfield}
       fh: q(".fh"), gt: $("gt"), pw: q(".pw"), bar: $("progress-bar"),
       rp: q(".rp"), sto: $("sto"), schedGrid: $("sched-grid"),
       svDisp: q(".sv"), ivHh: $("iv-hh"), ivMm: $("iv-mm"),
-      histEmptyInline: $("hist-empty-inline"), histData: $("hist-data"), divider: $("divider"),
+      histCompact: $("hist-compact"), histExpanded: $("hist-expanded"),
+      histSummary: $("hist-summary"), histDetail: $("hist-detail"),
+      divider: $("divider"),
       intgMissing: $("intg-missing"),
       hv: q(".hv"), hlb: q(".hlb"), htx: q(".htx"),
-      expBtn: $("hexp"), detailPanel: q(".detail-panel"),
+      expBtn: $("hexp"), expBtnCompact: $("hexp-compact"),
       dvStart: $("dv-start"), dvEnd: $("dv-end"),
     };
   }
@@ -553,6 +607,7 @@ input[type=number]{-moz-appearance:textfield}
     el.ivHh?.addEventListener("change", () => this._setIv());
     el.ivMm?.addEventListener("change", () => this._setIv());
     el.expBtn?.addEventListener("click", () => this._toggleHist());
+    el.expBtnCompact?.addEventListener("click", () => this._toggleHist());
   }
 
   // ── Selective DOM update (runs on every subsequent hass update) ──
@@ -641,22 +696,26 @@ input[type=number]{-moz-appearance:textfield}
       this._setInput(el.ivMm, this._p2(ivM));
     }
 
-    // ── History (show/hide via CSS) ──
+    // ── History: three states (empty / compact / expanded) ──
     const hasData = ago !== null;
-    if (el.histEmptyInline) el.histEmptyInline.style.display = hasData ? "none" : "inline";
-    if (el.histData) el.histData.style.display = hasData ? "block" : "none";
+    const showExpanded = this._histExpanded && hasData;
+    const smart = this._smartDate(this._lc(e.last_duration));
+    if (el.histCompact) el.histCompact.style.display = showExpanded ? "none" : "flex";
+    if (el.histExpanded) el.histExpanded.style.display = showExpanded ? "block" : "none";
+    if (el.histSummary) {
+      this._txt(el.histSummary, this._buildHistSummary(ago, smart, vol));
+      this._cls(el.histSummary, "none", !hasData);
+    }
+    if (el.expBtnCompact) el.expBtnCompact.style.display = hasData ? "flex" : "none";
     if (hasData) {
-      const loc = _numLocale(this._hass);
-      this._txt(el.hv, vol.toLocaleString(loc, {minimumFractionDigits:1, maximumFractionDigits:1}) + " L");
+      this._txt(el.hv, this._fmtVol(vol));
       this._txt(el.hlb, t("duration") + ": " + this._fd(dur));
       this._txt(el.htx, ago);
-    }
-    if (el.expBtn) { el.expBtn.style.display = hasStEt ? "flex" : "none"; this._txt(el.expBtn, this._histExpanded ? "\u2212" : "+"); }
-    this._cls(el.expBtn, "open", this._histExpanded);
-    this._cls(el.detailPanel, "vi", this._histExpanded && hasStEt);
-    if (hasStEt) {
-      this._txt(el.dvStart, stLocal);
-      this._txt(el.dvEnd, etLocal);
+      if (el.histDetail) el.histDetail.style.display = hasStEt ? "block" : "none";
+      if (hasStEt) {
+        this._txt(el.dvStart, stLocal);
+        this._txt(el.dvEnd, etLocal);
+      }
     }
   }
 

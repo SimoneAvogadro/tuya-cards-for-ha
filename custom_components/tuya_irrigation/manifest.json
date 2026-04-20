@@ -1,7 +1,7 @@
 {
   "domain": "tuya_irrigation",
   "name": "Tuya Irrigation",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "documentation": "https://github.com/SimoneAvogadro/tuya-cards-for-ha",
   "issue_tracker": "https://github.com/SimoneAvogadro/tuya-cards-for-ha/issues",
   "dependencies": ["frontend", "http", "lovelace"],

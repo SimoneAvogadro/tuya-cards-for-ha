@@ -12,8 +12,8 @@ The **cards** auto-discover compatible devices from a single entity via suffix c
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services | v2.1.0 |
-| `irrigation-control-card` | Lovelace card driving the services above | v2.1.0 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services | v2.1.1 |
+| `irrigation-control-card` | Lovelace card driving the services above | v2.1.1 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
 ## Installation (HACS)

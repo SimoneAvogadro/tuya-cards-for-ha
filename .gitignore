@@ -1,0 +1,11 @@
+# Claude Code local settings
+.claude/
+
+# Local HA backups and logs (not part of the project)
+backup_con_log/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~

@@ -9,6 +9,11 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.2.1 — Offline detection now also checks staleness across the device's
+ *          chatty entities (battery, summation, last_duration, switch). Works
+ *          around the ZHA bug where the switch entity stays cached as "off"
+ *          for hours after the valve has actually disappeared from the mesh.
+ *          Default stale window 24 h, configurable via `stale_hours` (0 to disable).
  * v2.2.0 — Offline state: when the valve switch is unavailable/unknown, show a
  *          red "Offline" badge, an explanatory banner, hide battery, and disable
  *          the action buttons so calls don't fail silently.
@@ -185,6 +190,10 @@ class IrrigationControlCard extends HTMLElement {
     else if (config.switch) this._entities = buildEntities(config.switch);
     else throw new Error(_t(this._hass, "configError"));
     this._configName = config.name || "";
+    // Staleness fallback for ZHA's "device cached as off forever" bug. Default
+    // 24h is wide enough to never false-positive on an idle valve. Set 0 to
+    // disable and rely solely on state == unavailable.
+    this._staleSec = (config.stale_hours ?? 24) * 3600;
     this._config = config;
     this._domCreated = false;
     if (this._hass) this._render();
@@ -220,13 +229,29 @@ class IrrigationControlCard extends HTMLElement {
   _nv(eid) { const v = parseFloat(this._sv(eid)); return isNaN(v) ? 0 : v; }
   _lc(eid) { const s = this._hass?.states[eid]; return s ? new Date(s.last_changed) : null; }
   _isOn() { return this._sv(this._entities.switch) === "on"; }
-  // Valve unreachable: switch entity missing or marked unavailable/unknown.
-  // No staleness check — battery valves are silent when idle; long silence
-  // is normal. Affects only the switch (history sensors stay readable).
+  // Valve unreachable: switch entity missing/unavailable, OR no entity of
+  // the device has reported anything within `stale_hours`. The staleness
+  // check covers the well-known ZHA bug where the availability sweep silently
+  // skips devices and the switch state stays cached as "off" indefinitely.
+  // We MAX last_updated across the chattiest entities (battery + summation
+  // are touched periodically by Tuya devices even when idle); if all are
+  // older than the threshold, the device is offline.
   _isOffline() {
     const s = this._hass?.states[this._entities.switch];
     if (!s) return true;
-    return s.state === "unavailable" || s.state === "unknown" || s.state === "none";
+    if (s.state === "unavailable" || s.state === "unknown" || s.state === "none") return true;
+    if (this._staleSec > 0) {
+      const eids = [this._entities.switch, this._entities.battery, this._entities.summation, this._entities.last_duration];
+      let mostRecent = 0;
+      for (const eid of eids) {
+        const st = this._hass?.states[eid];
+        if (!st?.last_updated) continue;
+        const t = new Date(st.last_updated).getTime();
+        if (!isNaN(t) && t > mostRecent) mostRecent = t;
+      }
+      if (mostRecent > 0 && (Date.now() - mostRecent) / 1000 > this._staleSec) return true;
+    }
+    return false;
   }
   async _svc(d, s, data) { await this._hass.callService(d, s, data); }
 
@@ -795,7 +820,7 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.1 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
 // --- soil-moisture-card.js ---
 /**
  * Soil Moisture Card for Home Assistant

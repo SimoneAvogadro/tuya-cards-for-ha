@@ -1,8 +1,9 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
- * v2.0.0 — Delegates open/wait/close to the tuya_irrigation custom integration (server-side timer).
- *          Cycles/interval scheduling UI is hidden; the DOM is kept for future re-enablement.
+ * v2.2.0 — Offline state: when the valve switch is unavailable/unknown, show a
+ *          red "Offline" badge, an explanatory banner, hide battery, and disable
+ *          the action buttons so calls don't fail silently.
  */
 
 // ── i18n ──
@@ -25,6 +26,8 @@ const I18N = {
     defaultName: "Irrigazione",
     integrationMissing: "Installa l'integrazione Tuya Irrigation per abilitare il controllo",
     cardDesc: "Card compatta per valvole irrigazione Tuya con timer, pianificazione e storico",
+    offline: "Offline",
+    offlineMsg: "Valvola non raggiungibile — controllare batteria e segnale Zigbee",
   },
   en: {
     irrigating: "Irrigating", paused: "Paused", off: "Off",
@@ -44,6 +47,8 @@ const I18N = {
     defaultName: "Irrigation",
     integrationMissing: "Install the Tuya Irrigation integration to enable control",
     cardDesc: "Compact card for Tuya irrigation valves with timer, scheduling and history",
+    offline: "Offline",
+    offlineMsg: "Valve unreachable — check battery and Zigbee signal",
   },
   zh: {
     irrigating: "灌溉中", paused: "已暂停", off: "关闭",
@@ -63,6 +68,8 @@ const I18N = {
     defaultName: "灌溉",
     integrationMissing: "请安装 Tuya Irrigation 集成以启用控制",
     cardDesc: "适用于涂鸦灌溉阀的紧凑卡片，含定时、计划和历史记录",
+    offline: "离线",
+    offlineMsg: "阀门无法连接 — 请检查电池和 Zigbee 信号",
   },
 };
 function _i18nLang(hass) {
@@ -205,6 +212,14 @@ class IrrigationControlCard extends HTMLElement {
   _nv(eid) { const v = parseFloat(this._sv(eid)); return isNaN(v) ? 0 : v; }
   _lc(eid) { const s = this._hass?.states[eid]; return s ? new Date(s.last_changed) : null; }
   _isOn() { return this._sv(this._entities.switch) === "on"; }
+  // Valve unreachable: switch entity missing or marked unavailable/unknown.
+  // No staleness check — battery valves are silent when idle; long silence
+  // is normal. Affects only the switch (history sensors stay readable).
+  _isOffline() {
+    const s = this._hass?.states[this._entities.switch];
+    if (!s) return true;
+    return s.state === "unavailable" || s.state === "unknown" || s.state === "none";
+  }
   async _svc(d, s, data) { await this._hass.callService(d, s, data); }
 
   // ── DOM helpers ──
@@ -238,6 +253,7 @@ class IrrigationControlCard extends HTMLElement {
 
   async _startLitri() {
     const v = this._inputLitri; if (v <= 0) return;
+    if (this._isOffline()) return;
     if (!this._integrationAvailable()) { console.warn("[irrigation-control-card] tuya_irrigation integration not installed"); return; }
     await this._svc("tuya_irrigation", "irrigation_by_liters", {
       switch_entity: this._entities.switch,
@@ -247,6 +263,7 @@ class IrrigationControlCard extends HTMLElement {
   async _stopLitri() { await this._svc("switch", "turn_off", { entity_id: this._entities.switch }); }
 
   async _toggleTimer() {
+    if (this._isOffline()) return;
     if (this._timerState === "idle") await this._startTimerIrr();
     else if (this._timerState === "running") await this._pauseTimerIrr();
     else if (this._timerState === "paused") await this._resumeTimerIrr();
@@ -395,8 +412,10 @@ class IrrigationControlCard extends HTMLElement {
     else { tM = this._inputMin; tS = this._inputSec; }
 
     const t = (k) => _t(this._hass, k);
+    const offline = this._isOffline();
     let bTxt, bCls;
-    if (this._timerState === "paused") { bTxt = t("paused"); bCls = "badge paused"; }
+    if (offline) { bTxt = t("offline"); bCls = "badge offline"; }
+    else if (this._timerState === "paused") { bTxt = t("paused"); bCls = "badge paused"; }
     else if (isOn) { bTxt = t("irrigating"); bCls = "badge active"; }
     else { bTxt = t("off"); bCls = "badge off"; }
 
@@ -422,6 +441,7 @@ ha-card{overflow:hidden}
 .badge.off{background:var(--bd);color:var(--th)}
 .badge.active{background:var(--accent-dim);color:var(--accent)}
 .badge.paused{background:rgba(234,179,8,.12);color:#eab308}
+.badge.offline{background:rgba(226,85,85,.15);color:var(--danger);font-weight:600}
 .cb{padding:6px 16px 14px}
 .sc{margin-bottom:16px}.sc:last-child{margin-bottom:0}
 .sl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:8px}
@@ -489,6 +509,11 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 input[type=number]{-moz-appearance:textfield}
 .intg-missing{background:rgba(226,85,85,.12);color:var(--danger);border:1px solid rgba(226,85,85,.3);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;text-align:center;display:none}
 .intg-missing.vi{display:block}
+.off-banner{background:rgba(226,85,85,.12);color:var(--danger);border:1px solid rgba(226,85,85,.3);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;display:none;align-items:center;gap:8px}
+.off-banner.vi{display:flex}
+.off-banner svg{flex-shrink:0}
+/* Disabled action panel when offline: keep layout but block interaction. */
+.sc.disabled{opacity:.45;pointer-events:none}
 </style>
 <ha-card>
   <div class="ch">
@@ -497,13 +522,17 @@ input[type=number]{-moz-appearance:textfield}
       <span class="tt">${name}</span>
     </div>
     <div class="hr">
-      ${hasBatt ? `<div class="bt"><div class="bs"><div class="bf" style="width:${Math.min(100,batt)}%"></div></div><div class="bp"></div><span class="batt-pct">${Math.round(batt)}%</span></div>` : ""}
+      ${hasBatt ? `<div class="bt" id="bt-wrap" style="display:${offline?"none":"flex"}"><div class="bs"><div class="bf" style="width:${Math.min(100,batt)}%"></div></div><div class="bp"></div><span class="batt-pct">${Math.round(batt)}%</span></div>` : ""}
       <span class="${bCls}">${bTxt}</span>
     </div>
   </div>
   <div class="cb">
     <div class="intg-missing ${this._integrationAvailable()?"":"vi"}" id="intg-missing">${t("integrationMissing")}</div>
-    <div class="sc">
+    <div class="off-banner ${this._isOffline()?"vi":""}" id="off-banner">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.86a10 10 0 0 1 14 0"/><path d="M8.5 16.43a5 5 0 0 1 7 0"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+      <span>${t("offlineMsg")}</span>
+    </div>
+    <div class="sc ${this._isOffline()?"disabled":""}" id="action-sec">
       <div class="ar">
         <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>${t("liters")}</button>
         <button class="ab ${this._mode==="tempo"?"ac":""}" id="bt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${t("time")}</button>
@@ -574,6 +603,7 @@ input[type=number]{-moz-appearance:textfield}
     const q = (sel) => r.querySelector(sel);
     this._el = {
       tt: q(".tt"), bf: q(".bf"), battPct: q(".batt-pct"), badge: q(".badge"),
+      battWrap: $("bt-wrap"),
       bl: $("bl"), bt: $("bt"),
       ipLitri: $("ip-litri"), ipTempo: $("ip-tempo"),
       vl: $("vl"), gl: $("gl"),
@@ -586,6 +616,8 @@ input[type=number]{-moz-appearance:textfield}
       histDetail: $("hist-detail"),
       divider: $("divider"),
       intgMissing: $("intg-missing"),
+      offBanner: $("off-banner"),
+      actionSec: $("action-sec"),
       hv: q(".hv"), hlb: q(".hlb"), htx: q(".htx"),
       expBtn: $("hexp"), expBtnCompact: $("hexp-compact"),
       dvStart: $("dv-start"), dvEnd: $("dv-end"),
@@ -637,14 +669,23 @@ input[type=number]{-moz-appearance:textfield}
 
     // ── Header ──
     this._txt(el.tt, name);
-    if (el.bf) el.bf.style.width = Math.min(100, batt) + "%";
-    if (el.battPct) this._txt(el.battPct, Math.round(batt) + "%");
+    const offline = this._isOffline();
+    if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
+    if (!offline) {
+      if (el.bf) el.bf.style.width = Math.min(100, batt) + "%";
+      if (el.battPct) this._txt(el.battPct, Math.round(batt) + "%");
+    }
 
     let bTxt, bCls;
-    if (this._timerState === "paused") { bTxt = t("paused"); bCls = "paused"; }
+    if (offline) { bTxt = t("offline"); bCls = "offline"; }
+    else if (this._timerState === "paused") { bTxt = t("paused"); bCls = "paused"; }
     else if (isOn) { bTxt = t("irrigating"); bCls = "active"; }
     else { bTxt = t("off"); bCls = "off"; }
     if (el.badge) { this._txt(el.badge, bTxt); el.badge.className = "badge " + bCls; }
+
+    // ── Offline banner + action panel gating ──
+    this._cls(el.offBanner, "vi", offline);
+    this._cls(el.actionSec, "disabled", offline);
 
     // ── Mode buttons ──
     this._cls(el.bl, "ac", this._mode === "litri");
@@ -746,4 +787,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.0.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

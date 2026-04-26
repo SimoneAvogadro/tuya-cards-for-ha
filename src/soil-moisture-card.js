@@ -1,7 +1,9 @@
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
- * v1.1.3 — Swap soil/air sources: soil column reads _humidity, air column reads _soil_moisture
+ * v1.2.0 — Offline state: detect unavailable/stale entities and replace the
+ *          three-column readout with a single "Offline · last seen N ago" row.
+ *          Default stale threshold 6 h, configurable via `stale_hours`.
  */
 
 // ── i18n ──
@@ -19,6 +21,13 @@ const SM_I18N = {
     configError: "Seleziona un sensore umidità suolo nella configurazione",
     defaultName: "Umidità suolo",
     cardDesc: "Card compatta per sensori umidità suolo, temperatura e umidità aria",
+    offline: "Offline",
+    lastSeen: "ultima lettura",
+    neverSeen: "mai visto",
+    now: "ora",
+    minAgo: "${m} min fa",
+    hoursAgo: "${h}h fa",
+    daysAgo: "${d}g fa",
   },
   en: {
     soil: "Soil", temperature: "Temperature", humidity: "Air",
@@ -33,6 +42,13 @@ const SM_I18N = {
     configError: "Select a soil moisture sensor in the configuration",
     defaultName: "Soil moisture",
     cardDesc: "Compact card for soil moisture, temperature and air humidity sensors",
+    offline: "Offline",
+    lastSeen: "last reading",
+    neverSeen: "never seen",
+    now: "just now",
+    minAgo: "${m} min ago",
+    hoursAgo: "${h}h ago",
+    daysAgo: "${d}d ago",
   },
   zh: {
     soil: "土壤", temperature: "温度", humidity: "空气",
@@ -47,6 +63,13 @@ const SM_I18N = {
     configError: "请在配置中选择土壤湿度传感器",
     defaultName: "土壤湿度",
     cardDesc: "土壤湿度、温度和空气湿度传感器紧凑卡片",
+    offline: "离线",
+    lastSeen: "上次读数",
+    neverSeen: "从未见过",
+    now: "刚刚",
+    minAgo: "${m}分钟前",
+    hoursAgo: "${h}小时前",
+    daysAgo: "${d}天前",
   },
 };
 function _smLang(hass) {
@@ -54,6 +77,11 @@ function _smLang(hass) {
   return SM_I18N[lang] ? lang : "en";
 }
 function _sm(hass, key) { return (SM_I18N[_smLang(hass)] || SM_I18N.en)[key] || SM_I18N.en[key] || key; }
+function _smf(hass, key, vars) {
+  let s = _sm(hass, key);
+  for (const [k, v] of Object.entries(vars)) s = s.replace("${" + k + "}", v);
+  return s;
+}
 function _smLocale(hass) { return hass?.language || "en"; }
 
 // ── Entity discovery ──
@@ -179,9 +207,47 @@ class SoilMoistureCard extends HTMLElement {
     this._optMax = config.opt_max ?? 60;
     this._accMin = config.acc_min ?? 20;
     this._accMax = config.acc_max ?? 80;
+    // Default stale threshold = 6h, matches ZHA's "consider battery devices
+    // unavailable after". Set to 0 to disable the staleness check entirely.
+    this._staleSec = (config.stale_hours ?? 6) * 3600;
     this._config = config;
     this._domCreated = false;
     if (this._hass) this._render();
+  }
+
+  // True when the primary entity is missing, marked unavailable/unknown,
+  // or hasn't been updated within the configured stale window. Battery-
+  // powered Tuya sensors all flip together at the device level, so checking
+  // soil_moisture is enough to gate the whole card.
+  _isOffline() {
+    const eid = this._entities.soil_moisture;
+    const s = this._hass?.states[eid];
+    if (!s) return true;
+    if (s.state === "unavailable" || s.state === "unknown" || s.state === "none") return true;
+    if (this._staleSec > 0 && s.last_updated) {
+      const age = (Date.now() - new Date(s.last_updated).getTime()) / 1000;
+      if (age > this._staleSec) return true;
+    }
+    return false;
+  }
+
+  _lastUpdated() {
+    const s = this._hass?.states[this._entities.soil_moisture];
+    if (!s?.last_updated) return null;
+    const d = new Date(s.last_updated);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  _agoText(date) {
+    if (!date) return _sm(this._hass, "neverSeen");
+    const d = Date.now() - date.getTime();
+    if (d < 0) return _sm(this._hass, "neverSeen");
+    const m = Math.floor(d / 60000);
+    if (m < 1) return _sm(this._hass, "now");
+    if (m < 60) return _smf(this._hass, "minAgo", { m });
+    const h = Math.floor(m / 60);
+    if (h < 24) return _smf(this._hass, "hoursAgo", { h });
+    return _smf(this._hass, "daysAgo", { d: Math.floor(h / 24) });
   }
 
   _getName() {
@@ -237,6 +303,8 @@ class SoilMoistureCard extends HTMLElement {
     const t = (k) => _sm(this._hass, k);
     const tc = this._thresholdColor(soil);
     const cc = this._colorCSS(tc);
+    const offline = this._isOffline();
+    const ago = this._agoText(this._lastUpdated());
 
     this.shadowRoot.innerHTML = `
 <style>
@@ -259,6 +327,11 @@ ha-card{overflow:hidden}
 .col-unit{font-size:11px;font-weight:400;color:var(--ts)}
 .bar-wrap{height:4px;border-radius:2px;background:var(--bd);margin-top:6px;overflow:hidden}
 .bar-fill{height:100%;border-radius:2px;transition:width .4s ease,background .3s}
+.off-row{display:flex;align-items:center;gap:12px;padding:4px 0}
+.off-icon{width:36px;height:36px;border-radius:8px;background:rgba(226,85,85,.12);color:var(--sm-red);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.off-text{flex:1;min-width:0}
+.off-label{font-size:13px;font-weight:600;color:var(--sm-red)}
+.off-sub{font-size:11px;color:var(--th);margin-top:2px}
 </style>
 <ha-card>
   <div class="ch">
@@ -266,12 +339,12 @@ ha-card{overflow:hidden}
       <div class="di" id="icon" style="background:${cc.dim}"><svg width="18" height="18" viewBox="0 0 24 24" fill="${cc.text}"><path d="M12 2.5S5 10 5 15a7 7 0 0014 0c0-5-7-12.5-7-12.5zm-1 15c-2.5-.3-4.5-2.3-4.7-4.8-.1-.4.2-.7.5-.7s.6.2.7.6c.2 1.9 1.7 3.4 3.6 3.6.4 0 .6.3.6.7s-.3.6-.7.6z"/></svg></div>
       <span class="tt">${name}</span>
     </div>
-    <div class="hr">
-      ${hasBatt ? `<div class="bt"><div class="bs"><div class="bf" style="width:${Math.min(100,batt)}%"></div></div><div class="bp"></div><span class="batt-pct">${Math.round(batt)}%</span></div>` : ""}
+    <div class="hr" id="hr">
+      ${hasBatt ? `<div class="bt" id="bt-wrap" style="display:${offline?"none":"flex"}"><div class="bs"><div class="bf" style="width:${Math.min(100,batt)}%"></div></div><div class="bp"></div><span class="batt-pct">${Math.round(batt)}%</span></div>` : ""}
     </div>
   </div>
   <div class="cb">
-    <div class="cols">
+    <div class="cols" id="cols-view" style="display:${offline?"none":"grid"}">
       <div class="col" id="col-soil">
         <div class="col-label">${t("soil")}</div>
         <div class="col-value" id="v-soil" style="color:${cc.text}">${soil.toLocaleString(loc, {maximumFractionDigits:0})}%</div>
@@ -286,6 +359,13 @@ ha-card{overflow:hidden}
         <div class="col-value" id="v-hum">${hum.toLocaleString(loc, {maximumFractionDigits:0})}%</div>
       </div>
     </div>
+    <div class="off-row" id="off-view" style="display:${offline?"flex":"none"}">
+      <div class="off-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.86a10 10 0 0 1 14 0"/><path d="M8.5 16.43a5 5 0 0 1 7 0"/><line x1="2" y1="2" x2="22" y2="22"/></svg></div>
+      <div class="off-text">
+        <div class="off-label">${t("offline")}</div>
+        <div class="off-sub" id="off-sub">${t("lastSeen")}: ${ago}</div>
+      </div>
+    </div>
   </div>
 </ha-card>`;
     this._cacheEls();
@@ -297,8 +377,12 @@ ha-card{overflow:hidden}
       tt: r.querySelector(".tt"),
       bf: r.querySelector(".bf"),
       battPct: r.querySelector(".batt-pct"),
+      battWrap: r.getElementById("bt-wrap"),
       icon: r.getElementById("icon"),
       iconSvg: r.querySelector("#icon svg"),
+      colsView: r.getElementById("cols-view"),
+      offView: r.getElementById("off-view"),
+      offSub: r.getElementById("off-sub"),
       vSoil: r.getElementById("v-soil"),
       barSoil: r.getElementById("bar-soil"),
       vTemp: r.getElementById("v-temp"),
@@ -308,18 +392,33 @@ ha-card{overflow:hidden}
 
   _update() {
     const e = this._entities;
+    const el = this._el;
+    const name = this._getName();
+    const t = (k) => _sm(this._hass, k);
+    this._txt(el.tt, name);
+
+    const offline = this._isOffline();
+    if (el.colsView) el.colsView.style.display = offline ? "none" : "grid";
+    if (el.offView) el.offView.style.display = offline ? "flex" : "none";
+    if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
+
+    if (offline) {
+      // Dim the header icon to gray when offline so the visual cue carries.
+      if (el.icon) el.icon.style.background = "var(--bd)";
+      if (el.iconSvg) el.iconSvg.setAttribute("fill", "var(--th)");
+      if (el.offSub) this._txt(el.offSub, t("lastSeen") + ": " + this._agoText(this._lastUpdated()));
+      return;
+    }
+
     // Sources swapped: see note in _createDOM.
     const soil = this._nv(e.humidity);
     const temp = this._nv(e.temperature);
     const hum = this._nv(e.soil_moisture);
     const batt = this._nv(e.battery);
-    const name = this._getName();
     const loc = _smLocale(this._hass);
     const tc = this._thresholdColor(soil);
     const cc = this._colorCSS(tc);
-    const el = this._el;
 
-    this._txt(el.tt, name);
     if (el.bf) el.bf.style.width = Math.min(100, batt) + "%";
     if (el.battPct) this._txt(el.battPct, Math.round(batt) + "%");
 
@@ -367,4 +466,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for soil moisture, temperature and air humidity sensors";
   window.customCards.push({ type: "soil-moisture-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c SOIL-MOISTURE-CARD %c v1.1.3 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c SOIL-MOISTURE-CARD %c v1.2.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

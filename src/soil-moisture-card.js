@@ -1,7 +1,7 @@
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
- * v1.1.2 — Localized picker name for better discoverability
+ * v1.1.3 — Swap soil/air sources: soil column reads _humidity, air column reads _soil_moisture
  */
 
 // ── i18n ──
@@ -225,9 +225,11 @@ class SoilMoistureCard extends HTMLElement {
 
   _createDOM() {
     const e = this._entities;
-    const soil = this._nv(e.soil_moisture);
+    // NOTE: sources intentionally swapped — this device reports soil moisture
+    // under the _humidity suffix and air humidity under _soil_moisture.
+    const soil = this._nv(e.humidity);
     const temp = this._nv(e.temperature);
-    const hum = this._nv(e.humidity);
+    const hum = this._nv(e.soil_moisture);
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
     const name = this._getName();
@@ -306,9 +308,10 @@ ha-card{overflow:hidden}
 
   _update() {
     const e = this._entities;
-    const soil = this._nv(e.soil_moisture);
+    // Sources swapped: see note in _createDOM.
+    const soil = this._nv(e.humidity);
     const temp = this._nv(e.temperature);
-    const hum = this._nv(e.humidity);
+    const hum = this._nv(e.soil_moisture);
     const batt = this._nv(e.battery);
     const name = this._getName();
     const loc = _smLocale(this._hass);
@@ -364,4 +367,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for soil moisture, temperature and air humidity sensors";
   window.customCards.push({ type: "soil-moisture-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c SOIL-MOISTURE-CARD %c v1.1.2 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c SOIL-MOISTURE-CARD %c v1.1.3 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

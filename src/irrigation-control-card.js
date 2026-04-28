@@ -1,6 +1,10 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.2.2 — Offline UI: hide the action panel entirely (Liters/Time buttons +
+ *          inputs) instead of just dimming it. The buttons can't do anything
+ *          when the valve is unreachable, so the dim+disabled state was just
+ *          visual clutter.
  * v2.2.1 — Offline detection now also checks staleness across the device's
  *          chatty entities (battery, summation, last_duration, switch). Works
  *          around the ZHA bug where the switch entity stays cached as "off"
@@ -537,8 +541,8 @@ input[type=number]{-moz-appearance:textfield}
 .off-banner{background:rgba(226,85,85,.12);color:var(--danger);border:1px solid rgba(226,85,85,.3);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;display:none;align-items:center;gap:8px}
 .off-banner.vi{display:flex}
 .off-banner svg{flex-shrink:0}
-/* Disabled action panel when offline: keep layout but block interaction. */
-.sc.disabled{opacity:.45;pointer-events:none}
+/* Hide action panel entirely when offline: the buttons can't do anything. */
+.sc.disabled{display:none}
 </style>
 <ha-card>
   <div class="ch">
@@ -812,4 +816,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.1 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.2 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

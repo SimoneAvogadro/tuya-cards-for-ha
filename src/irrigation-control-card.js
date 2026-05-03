@@ -599,7 +599,7 @@ input[type=number]{-moz-appearance:textfield}
       <div class="ar">
         <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>${t("liters")}</button>
         <button class="ab ${this._mode==="tempo"?"ac":""}" id="bt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${t("time")}</button>
-        <button class="ab" id="bm" title="${this._manualSec >= 60 ? Math.round(this._manualSec/60)+'′' : this._manualSec+'″'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>${t("manual")}</button>
+        <button class="ab" id="bm" title="${this._manualSec >= 60 ? Math.round(this._manualSec/60)+'′' : this._manualSec+'″'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"/></svg>${t("manual")}</button>
       </div>
       <div class="ip ${this._mode==="litri"?"vi":""}" id="ip-litri"><div>
         <div class="ir">

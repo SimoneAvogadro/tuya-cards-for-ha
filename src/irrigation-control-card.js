@@ -1,6 +1,13 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.2.5 — Add a third "Manual" action button next to Liters/Time. It's a
+ *          one-shot shortcut: opens the Time panel pre-filled with
+ *          `manual_seconds` (default 300, configurable via the visual editor,
+ *          range 30-1800) and starts immediately. Reuses the existing
+ *          tuya_irrigation.irrigation_by_seconds service so the integration's
+ *          shutdown safety sweep covers the valve too. Stop early via the
+ *          standard Time-panel stop button.
  * v2.2.4 — Drop the last_updated staleness fallback: ZHA doesn't refresh
  *          last_updated for unchanged values, so a quiet but healthy valve
  *          (no irrigation, stable battery, no summation change) flipped to
@@ -21,7 +28,7 @@
 const I18N = {
   it: {
     irrigating: "Irrigando", paused: "In pausa", off: "Spento",
-    dispenseFor: "Eroga per:", liters: "Litri", time: "Tempo",
+    dispenseFor: "Eroga per:", liters: "Litri", time: "Tempo", manual: "Manuale",
     remaining: "rimanente",
     repeats: "Ripetizioni", cycles: "Cicli", cycleInterval: "Intervallo cicli",
     lastIrrigation: "Ultima irrigazione", duration: "Durata",
@@ -33,6 +40,8 @@ const I18N = {
     editorNoDevice: "Nessun dispositivo irrigazione compatibile",
     editorName: "Nome (opzionale)", editorNamePh: "Nome personalizzato",
     editorNameHint: "Lascia vuoto per usare il nome del dispositivo",
+    editorManualSec: "Durata test manuale (secondi)",
+    editorManualSecHint: "Quanto dura la prova rapida quando premi il pulsante Manuale (30–1800 s)",
     configError: "Seleziona un dispositivo irrigazione nella configurazione",
     defaultName: "Irrigazione",
     integrationMissing: "Installa l'integrazione Tuya Irrigation per abilitare il controllo",
@@ -42,7 +51,7 @@ const I18N = {
   },
   en: {
     irrigating: "Irrigating", paused: "Paused", off: "Off",
-    dispenseFor: "Dispense for:", liters: "Liters", time: "Time",
+    dispenseFor: "Dispense for:", liters: "Liters", time: "Time", manual: "Manual",
     remaining: "remaining",
     repeats: "Repeats", cycles: "Cycles", cycleInterval: "Cycle interval",
     lastIrrigation: "Last irrigation", duration: "Duration",
@@ -54,6 +63,8 @@ const I18N = {
     editorNoDevice: "No compatible irrigation device found",
     editorName: "Name (optional)", editorNamePh: "Custom name",
     editorNameHint: "Leave empty to use device name",
+    editorManualSec: "Manual test duration (seconds)",
+    editorManualSecHint: "How long the quick test runs when you press Manual (30–1800 s)",
     configError: "Select an irrigation device in the configuration",
     defaultName: "Irrigation",
     integrationMissing: "Install the Tuya Irrigation integration to enable control",
@@ -63,7 +74,7 @@ const I18N = {
   },
   zh: {
     irrigating: "灌溉中", paused: "已暂停", off: "关闭",
-    dispenseFor: "灌溉方式：", liters: "升量", time: "时长",
+    dispenseFor: "灌溉方式：", liters: "升量", time: "时长", manual: "手动",
     remaining: "剩余",
     repeats: "重复", cycles: "循环次数", cycleInterval: "循环间隔",
     lastIrrigation: "上次灌溉", duration: "持续时间",
@@ -75,6 +86,8 @@ const I18N = {
     editorNoDevice: "未找到兼容的灌溉设备",
     editorName: "名称（可选）", editorNamePh: "自定义名称",
     editorNameHint: "留空使用设备名称",
+    editorManualSec: "手动测试时长（秒）",
+    editorManualSecHint: "按下手动按钮时快速测试的持续时间（30–1800 秒）",
     configError: "请在配置中选择灌溉设备",
     defaultName: "灌溉",
     integrationMissing: "请安装 Tuya Irrigation 集成以启用控制",
@@ -132,13 +145,14 @@ class IrrigationControlCardEditor extends HTMLElement {
     const compat = findCompatible(this._hass);
     const cur = this._config.switch || "";
     const nm = this._config.name || "";
+    const ms = this._config.manual_seconds ?? 300;
     const t = (k) => _t(this._hass, k);
     this.shadowRoot.innerHTML = `
 <style>
 .editor{padding:16px;font-family:var(--paper-font-body1_-_font-family,sans-serif)}
 .row{margin-bottom:16px}
 label{display:block;font-size:12px;font-weight:500;color:var(--secondary-text-color);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
-select,input[type="text"]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--divider-color,rgba(255,255,255,.06));background:var(--card-background-color,#232640);color:var(--primary-text-color);font-size:14px;font-family:monospace;outline:none;box-sizing:border-box}
+select,input[type="text"],input[type="number"]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--divider-color,rgba(255,255,255,.06));background:var(--card-background-color,#232640);color:var(--primary-text-color);font-size:14px;font-family:monospace;outline:none;box-sizing:border-box}
 select:focus,input:focus{border-color:#4a90d9}
 .hint{font-size:11px;color:var(--disabled-text-color,#5c5e76);margin-top:4px}
 .empty{font-size:13px;color:var(--disabled-text-color);padding:12px;text-align:center;background:var(--divider-color,rgba(255,255,255,.06));border-radius:8px}
@@ -156,9 +170,20 @@ select:focus,input:focus{border-color:#4a90d9}
     <input type="text" id="nm" value="${nm}" placeholder="${t("editorNamePh")}">
     <div class="hint">${t("editorNameHint")}</div>
   </div>
+  <div class="row">
+    <label>${t("editorManualSec")}</label>
+    <input type="number" id="ms" value="${ms}" min="30" max="1800" step="30">
+    <div class="hint">${t("editorManualSecHint")}</div>
+  </div>
 </div>`;
     this.shadowRoot.getElementById("sw")?.addEventListener("change", e => { this._config = { ...this._config, switch: e.target.value }; this._fire(); });
     this.shadowRoot.getElementById("nm")?.addEventListener("input", e => { if (e.target.value) this._config = { ...this._config, name: e.target.value }; else { const { name, ...r } = this._config; this._config = r; } this._fire(); });
+    this.shadowRoot.getElementById("ms")?.addEventListener("change", e => {
+      const v = parseInt(e.target.value);
+      if (Number.isFinite(v) && v >= 30 && v <= 1800) this._config = { ...this._config, manual_seconds: v };
+      else { const { manual_seconds, ...r } = this._config; this._config = r; }
+      this._fire();
+    });
   }
   _fire() { this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true })); }
 }
@@ -181,13 +206,18 @@ class IrrigationControlCard extends HTMLElement {
   }
 
   static getConfigElement() { return document.createElement("irrigation-control-card-editor"); }
-  static getStubConfig() { return { switch: "", name: "" }; }
+  static getStubConfig() { return { switch: "", name: "", manual_seconds: 300 }; }
 
   setConfig(config) {
     if (config.entities?.switch) this._entities = config.entities;
     else if (config.switch) this._entities = buildEntities(config.switch);
     else throw new Error(_t(this._hass, "configError"));
     this._configName = config.name || "";
+    // Quick-test duration for the Manual shortcut button. Clamped to a sane
+    // range so a typo can't fire a 5-hour irrigation. Default 5 min covers
+    // sprinkler tests; user can stop early via the Tempo panel's stop button.
+    const rawManual = parseInt(config.manual_seconds);
+    this._manualSec = (Number.isFinite(rawManual) && rawManual >= 30 && rawManual <= 1800) ? rawManual : 300;
     this._config = config;
     this._domCreated = false;
     if (this._hass) this._render();
@@ -293,6 +323,26 @@ class IrrigationControlCard extends HTMLElement {
     // is handled server-side by the integration.
     this._weStarted = true; this._timerState = "running"; this._startCountdown(); this._render();
   }
+  // One-shot shortcut: opens the Tempo panel, fills it with `_manualSec`,
+  // and starts immediately. The "Manual" button has no persistent active
+  // state — once clicked, the user is in Tempo mode with a running timer
+  // and can stop early via the standard Tempo stop button.
+  async _startManual() {
+    if (this._isOffline()) return;
+    if (!this._integrationAvailable()) { console.warn("[irrigation-control-card] tuya_irrigation integration not installed"); return; }
+    const tot = this._manualSec;
+    this._mode = "tempo";
+    this._inputMin = Math.floor(tot / 60);
+    this._inputSec = tot % 60;
+    this._userEditedTempo = true;
+    this._totalSec = tot; this._remainingSec = tot;
+    await this._svc("tuya_irrigation", "irrigation_by_seconds", {
+      switch_entity: this._entities.switch,
+      seconds: tot,
+    });
+    this._weStarted = true; this._timerState = "running"; this._startCountdown(); this._render();
+  }
+
   async _pauseTimerIrr() {
     // Pausing an integration-managed task is not resumable: pressing the
     // running button just fires turn_off, which triggers the integration's
@@ -549,6 +599,7 @@ input[type=number]{-moz-appearance:textfield}
       <div class="ar">
         <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>${t("liters")}</button>
         <button class="ab ${this._mode==="tempo"?"ac":""}" id="bt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${t("time")}</button>
+        <button class="ab" id="bm" title="${this._manualSec >= 60 ? Math.round(this._manualSec/60)+'′' : this._manualSec+'″'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>${t("manual")}</button>
       </div>
       <div class="ip ${this._mode==="litri"?"vi":""}" id="ip-litri"><div>
         <div class="ir">
@@ -617,7 +668,7 @@ input[type=number]{-moz-appearance:textfield}
     this._el = {
       tt: q(".tt"), bf: q(".bf"), battPct: q(".batt-pct"), badge: q(".badge"),
       battWrap: $("bt-wrap"),
-      bl: $("bl"), bt: $("bt"),
+      bl: $("bl"), bt: $("bt"), bm: $("bm"),
       ipLitri: $("ip-litri"), ipTempo: $("ip-tempo"),
       vl: $("vl"), gl: $("gl"),
       tg: q(".tg"), tMin: $("t-min"), tSec: $("t-sec"), tp: q(".tp"),
@@ -641,6 +692,7 @@ input[type=number]{-moz-appearance:textfield}
     const el = this._el;
     el.bl?.addEventListener("click", () => this._selectMode("litri"));
     el.bt?.addEventListener("click", () => this._selectMode("tempo"));
+    el.bm?.addEventListener("click", () => this._startManual());
     el.gl?.addEventListener("click", () => { if (this._isOn() && this._mode === "litri") this._stopLitri(); else this._startLitri(); });
     el.gt?.addEventListener("click", () => this._toggleTimer());
     el.vl?.addEventListener("change", ev => { this._inputLitri = Math.max(1, Math.min(999, parseInt(ev.target.value) || 1)); this._userEditedLitri = true; });
@@ -800,4 +852,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.4 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.5 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

@@ -12,13 +12,18 @@ The integration provides two server-side services that reliably open + wait + cl
 tuya-cards-for-ha/
 ├── custom_components/
 │   └── tuya_irrigation/
-│       ├── __init__.py           ← services + static path + Lovelace auto-reg
+│       ├── __init__.py           ← services + static path + Lovelace auto-reg + quirks import
 │       ├── config_flow.py        ← minimal single-entry config flow (one-click enable)
 │       ├── const.py
 │       ├── manifest.json
 │       ├── services.yaml
 │       ├── strings.json          ← config-flow UI strings (EN source)
 │       ├── translations/         ← per-language overrides (en, it)
+│       ├── quirks/               ← bundled ZHA custom quirks (auto-registered on import)
+│       │   ├── __init__.py       ← imports each quirk module for side-effect registration
+│       │   ├── giex_qt06_epoch2000.py
+│       │   ├── hobeian_zg303z.py
+│       │   └── tuya_ts0001_fdxihpp7.py
 │       └── www/
 │           └── tuya-cards.js     ← built bundle (copied by build.sh — DO NOT edit)
 ├── docs/
@@ -78,6 +83,18 @@ Every service call also adds the switch entity to `managed_switches: set[str]` i
 2. The file must end with `customElements.define(...)` and a `window.customCards.push(...)` (inside a self-invoking function that picks a localized display name from `localStorage.selectedLanguage`).
 3. Run `bash build.sh`.
 4. Update the "What's included" table in `README.md`.
+
+## Bundled ZHA quirks
+
+The integration ships custom ZHA quirks under `custom_components/tuya_irrigation/quirks/`. They are imported at module load time from the integration's top-level `__init__.py` (`from . import quirks`) so that defining a `CustomDevice` subclass — or calling `add_to_registry()` on a `QuirkBuilder` — registers them into zigpy's global registry **before** ZHA enumerates devices.
+
+Rules:
+- One quirk per file, named after the device family.
+- Each new quirk must be added to `quirks/__init__.py` so the side-effect import fires.
+- Update the "Bundled ZHA quirks" table in `README.md` whenever a quirk is added or its scope changes.
+- Quirks must not import from `custom_components.tuya_irrigation.*` other than `quirks.*` to keep them self-contained — they have to keep working even if ZHA loads them via `custom_quirks_path` instead of via the integration import path.
+
+Override semantics: zigpy uses last-registered-wins for the same `(manufacturer, model)` tuple. A quirk a user has dropped into their own `zha.custom_quirks_path` will shadow the bundled one, which is intentional (lets users patch locally without forking the integration). The README tells users to remove their manual copies after upgrading.
 
 ## HACS specifics
 

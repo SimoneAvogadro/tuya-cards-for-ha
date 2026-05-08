@@ -12,7 +12,7 @@ The **cards** auto-discover compatible devices from a single entity via suffix c
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services | v2.1.2 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + bundled ZHA quirks | v2.3.0 |
 | `irrigation-control-card` | Lovelace card driving the services above | v2.1.2 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
@@ -107,6 +107,22 @@ As long as HA shuts down gracefully (systemd stop, `ha core stop`, OS poweroff w
 You'll see one `Shutdown safety: closing open irrigation valve <entity>` WARNING per valve in the HA log when this kicks in. No configuration needed.
 
 This does **not** cover a hard power loss (kernel panic, pulled plug with no UPS) where HA has no chance to run any cleanup. For that, the UPS + OS graceful shutdown is what saves you — the integration simply rides the OS signal.
+
+---
+
+## Bundled ZHA quirks
+
+The integration ships a few custom ZHA quirks under `custom_components/tuya_irrigation/quirks/`. They are imported as a side-effect when the integration loads, so they register with zigpy's global device registry exactly as if they had been dropped into `zha.custom_quirks_path`. **No `configuration.yaml` change and no manual file copy needed** — installing or updating the integration via HACS is enough.
+
+| File | Devices targeted | What it fixes |
+|---|---|---|
+| `giex_qt06_epoch2000.py` | `_TZE200_a7sghmms` / `_TZE204_a7sghmms` / `_TZE200_7ytb3h8u` / `_TZE204_7ytb3h8u` / `_TZE284_7ytb3h8u` (TS0601 GiEX QT06 family) | Answers the device's `commandMcuSyncTime` with a 2000-01-01 epoch (Tuya epoch) instead of the upstream 1970 default. Without this, the firmware ignores the response and re-fires `MCU_SYNC` aggressively, draining the battery in days and producing flapping `irrigation_end_time` values. |
+| `hobeian_zg303z.py` | `HOBEIAN ZG-303Z` (Excellux 3-in-1 soil sensor) | Maps Tuya DP 5 → temperature and DP 109 → soil moisture; routes the device's other periodically-emitted DPs (3, 9, 15, 102, 104, 105, 110, 111, 112) to a no-op handler so ZHA stops replying with `UNSUPPORTED_ATTRIBUTE` (which the sleepy device fails to retrieve in time, triggering a cascade of `MAC_INDIRECT_TIMEOUT` errors). |
+| `tuya_ts0001_fdxihpp7.py` | `_TZ3000_fdxihpp7` / `_TZ3000_mkhkxx1p` (TS0001 single-channel switch with external rocker) | Exposes the Tuya `external_switch_type` attribute as an HA `select` (Toggle / State / Momentary). |
+
+If you previously deployed any of these manually under `/config/custom_zha_quirks/`, **delete the manual copy** after upgrading: ZHA registers the last-loaded quirk for a given `(manufacturer, model)`, so the manual file would shadow the bundled one and you would have to keep both in sync.
+
+After upgrading, paired devices may need a one-off **Reconfigure** (Settings → Devices & Services → device → ⋮ → Reconfigure) to pick up the new quirk class — same caveat as the manual `custom_quirks_path` workflow.
 
 ---
 

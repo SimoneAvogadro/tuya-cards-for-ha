@@ -3,9 +3,14 @@
 
 # Local HA backups and logs (not part of the project)
 backup_con_log/
+log/
 
 # OS / editor cruft
 .DS_Store
 Thumbs.db
 *.swp
 *~
+
+# Python bytecode
+__pycache__/
+*.pyc

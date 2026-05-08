@@ -40,6 +40,11 @@ from .const import (
     VERSION,
 )
 
+# Import for side-effect: registers bundled ZHA quirks into zigpy's global
+# registry. Needs to happen at module load time so ZHA picks them up before
+# enumerating devices.
+from . import quirks  # noqa: F401, E402
+
 _LOGGER = logging.getLogger(__name__)
 
 SECONDS_SCHEMA = vol.Schema(

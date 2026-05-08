@@ -1,6 +1,13 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.2.6 — "Ultima irrigazione" timestamp now reflects the device-reported
+ *          start_time entity instead of last_irrigation_duration.last_changed.
+ *          When start_time is unavailable (e.g. paired with a quirk that
+ *          doesn't emit it, or HA timestamp-class init bug), the line
+ *          collapses to "nessuna" — instead of synthesising a misleading
+ *          time from a sensor heartbeat that doesn't represent the actual
+ *          irrigation moment.
  * v2.2.5 — Add a third "Manual" action button next to Liters/Time. It's a
  *          one-shot shortcut: opens the Time panel pre-filled with
  *          `manual_seconds` (default 300, configurable via the visual editor,
@@ -251,7 +258,18 @@ class IrrigationControlCard extends HTMLElement {
   getCardSize() { return 5; }
   _sv(eid) { if (!eid || !this._hass?.states[eid]) return "unavailable"; return this._hass.states[eid].state; }
   _nv(eid) { const v = parseFloat(this._sv(eid)); return isNaN(v) ? 0 : v; }
-  _lc(eid) { const s = this._hass?.states[eid]; return s ? new Date(s.last_changed) : null; }
+  // Parse a timestamp-state entity (e.g. irrigation_start_time / _end_time)
+  // as a Date. Returns null when the entity is missing, unavailable, or its
+  // state isn't a valid timestamp. Used to drive the "ultima irrigazione"
+  // line: if the device hasn't reported a real start timestamp, the line
+  // collapses to "nessuna" rather than synthesising one from sensor
+  // last_changed (which would be a heartbeat proxy, not the real time).
+  _tsDate(eid) {
+    const s = this._hass?.states[eid];
+    if (!s || s.state === "unavailable" || s.state === "unknown" || s.state === "none" || !s.state) return null;
+    const d = new Date(s.state);
+    return isNaN(d.getTime()) ? null : d;
+  }
   _isOn() { return this._sv(this._entities.switch) === "on"; }
   // Trust HA's authoritative availability signal. ZHA's own sweep flips the
   // switch entity to "unavailable" when the device stops responding. We
@@ -464,7 +482,7 @@ class IrrigationControlCard extends HTMLElement {
     const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
     const dur = this._nv(e.last_duration);
     const vol = this._nv(e.summation);
-    const ago = this._ago(this._lc(e.last_duration));
+    const ago = this._ago(this._tsDate(e.start_time));
     const name = this._getName();
     const stLocal = this._fmtLocalTime(this._sv(e.start_time));
     const etLocal = this._fmtLocalTime(this._sv(e.end_time));
@@ -634,7 +652,7 @@ input[type=number]{-moz-appearance:textfield}
     <div class="sc" style="margin-bottom:0">
       <div class="hist-compact" id="hist-compact" style="display:${this._histExpanded&&ago!==null?"none":"flex"}">
         <span class="hist-compact-label">${t("lastIrrigation")}</span>
-        <span class="hist-when ${ago===null?"none":""}" id="hist-when">${ago===null?": "+t("none"):this._smartDate(this._lc(e.last_duration))}</span>
+        <span class="hist-when ${ago===null?"none":""}" id="hist-when">${ago===null?": "+t("none"):this._smartDate(this._tsDate(e.start_time))}</span>
         <span class="hist-vol" id="hist-vol" style="display:${ago!==null?"inline":"none"}"><span class="hist-vol-label">${t("liters")}:</span> <span id="hist-vol-val">${this._fmtVolShortNum(vol)}</span></span>
         <button class="exp-btn" id="hexp-compact" style="display:${ago!==null?"flex":"none"}">+</button>
       </div>
@@ -717,7 +735,7 @@ input[type=number]{-moz-appearance:textfield}
     const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
     const dur = this._nv(e.last_duration);
     const vol = this._nv(e.summation);
-    const ago = this._ago(this._lc(e.last_duration));
+    const ago = this._ago(this._tsDate(e.start_time));
     const name = this._getName();
     const stLocal = this._fmtLocalTime(this._sv(e.start_time));
     const etLocal = this._fmtLocalTime(this._sv(e.end_time));
@@ -805,7 +823,7 @@ input[type=number]{-moz-appearance:textfield}
     // ── History: three states (empty / compact / expanded) ──
     const hasData = ago !== null;
     const showExpanded = this._histExpanded && hasData;
-    const smart = this._smartDate(this._lc(e.last_duration));
+    const smart = this._smartDate(this._tsDate(e.start_time));
     if (el.histCompact) el.histCompact.style.display = showExpanded ? "none" : "flex";
     if (el.histExpanded) el.histExpanded.style.display = showExpanded ? "block" : "none";
     if (el.histWhen) {
@@ -852,4 +870,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.5 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.6 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

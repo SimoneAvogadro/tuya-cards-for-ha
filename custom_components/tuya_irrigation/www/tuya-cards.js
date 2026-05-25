@@ -9,6 +9,13 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.2.7 — Visual editor no longer steals focus while typing. HA pushes a
+ *          fresh hass object to all card editors every few seconds, and the
+ *          editor's set hass() was wholesale-replacing shadowRoot.innerHTML
+ *          on every push — destroying the focused <input> and stealing the
+ *          caret. Editor now builds its DOM once and patches values in
+ *          place, skipping inputs that have focus. Mirrors the in-place
+ *          update pattern already used by the main card render.
  * v2.2.6 — "Ultima irrigazione" timestamp now reflects the device-reported
  *          start_time entity instead of last_irrigation_duration.last_changed.
  *          When start_time is unavailable (e.g. paired with a quirk that
@@ -151,16 +158,27 @@ function findCompatible(hass) {
 }
 
 // ── Editor ──
+// v2.2.7: build the DOM once, then update values in place. HA pushes a fresh
+// `hass` object every few seconds (state updates); the old implementation
+// replaced shadowRoot.innerHTML on every push, which destroyed the currently
+// focused <input> and stole the caret mid-typing. Same anti-pattern that was
+// fixed in the main card render — applied here too. Focused inputs are never
+// overwritten (so the config-changed → setConfig round-trip can't reset the
+// caret either). Labels are baked at first build per [[feedback_no_live_lang_switch]].
 class IrrigationControlCardEditor extends HTMLElement {
-  constructor() { super(); this.attachShadow({ mode: "open" }); this._config = {}; this._hass = null; }
-  set hass(h) { this._hass = h; this._render(); }
-  setConfig(c) { this._config = { ...c }; this._render(); }
-  _render() {
-    if (!this._hass) return;
-    const compat = findCompatible(this._hass);
-    const cur = this._config.switch || "";
-    const nm = this._config.name || "";
-    const ms = this._config.manual_seconds ?? 300;
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._hass = null;
+    this._domBuilt = false;
+    this._el = {};
+    this._lastCompatKey = "";
+  }
+  set hass(h) { this._hass = h; this._update(); }
+  setConfig(c) { this._config = { ...c }; this._update(); }
+
+  _buildDom() {
     const t = (k) => _t(this._hass, k);
     this.shadowRoot.innerHTML = `
 <style>
@@ -171,35 +189,90 @@ select,input[type="text"],input[type="number"]{width:100%;padding:10px 12px;bord
 select:focus,input:focus{border-color:#4a90d9}
 .hint{font-size:11px;color:var(--disabled-text-color,#5c5e76);margin-top:4px}
 .empty{font-size:13px;color:var(--disabled-text-color);padding:12px;text-align:center;background:var(--divider-color,rgba(255,255,255,.06));border-radius:8px}
+[hidden]{display:none!important}
 </style>
 <div class="editor">
   <div class="row">
     <label>${t("editorDevice")}</label>
-    ${compat.length > 0 ? `<select id="sw"><option value="">${t("editorSelect")}</option>${compat.map(s => {
-      const n = this._hass.states[s]?.attributes?.friendly_name || s;
-      return `<option value="${s}" ${s===cur?"selected":""}>${n}</option>`;
-    }).join("")}</select><div class="hint">${t("editorHint")}</div>` : `<div class="empty">${t("editorNoDevice")}</div>`}
+    <div id="sw-wrap">
+      <select id="sw"></select>
+      <div class="hint">${t("editorHint")}</div>
+    </div>
+    <div id="sw-empty" class="empty" hidden>${t("editorNoDevice")}</div>
   </div>
   <div class="row">
     <label>${t("editorName")}</label>
-    <input type="text" id="nm" value="${nm}" placeholder="${t("editorNamePh")}">
+    <input type="text" id="nm" placeholder="${t("editorNamePh")}">
     <div class="hint">${t("editorNameHint")}</div>
   </div>
   <div class="row">
     <label>${t("editorManualSec")}</label>
-    <input type="number" id="ms" value="${ms}" min="30" max="1800" step="30">
+    <input type="number" id="ms" min="30" max="1800" step="30">
     <div class="hint">${t("editorManualSecHint")}</div>
   </div>
 </div>`;
-    this.shadowRoot.getElementById("sw")?.addEventListener("change", e => { this._config = { ...this._config, switch: e.target.value }; this._fire(); });
-    this.shadowRoot.getElementById("nm")?.addEventListener("input", e => { if (e.target.value) this._config = { ...this._config, name: e.target.value }; else { const { name, ...r } = this._config; this._config = r; } this._fire(); });
-    this.shadowRoot.getElementById("ms")?.addEventListener("change", e => {
-      const v = parseInt(e.target.value);
-      if (Number.isFinite(v) && v >= 30 && v <= 1800) this._config = { ...this._config, manual_seconds: v };
-      else { const { manual_seconds, ...r } = this._config; this._config = r; }
+    const r = this.shadowRoot;
+    this._el = {
+      sw: r.getElementById("sw"),
+      swWrap: r.getElementById("sw-wrap"),
+      swEmpty: r.getElementById("sw-empty"),
+      nm: r.getElementById("nm"),
+      ms: r.getElementById("ms"),
+    };
+    this._el.sw.addEventListener("change", e => {
+      this._config = { ...this._config, switch: e.target.value };
       this._fire();
     });
+    this._el.nm.addEventListener("input", e => {
+      if (e.target.value) this._config = { ...this._config, name: e.target.value };
+      else { const { name, ...rest } = this._config; this._config = rest; }
+      this._fire();
+    });
+    this._el.ms.addEventListener("change", e => {
+      const v = parseInt(e.target.value);
+      if (Number.isFinite(v) && v >= 30 && v <= 1800) this._config = { ...this._config, manual_seconds: v };
+      else { const { manual_seconds, ...rest } = this._config; this._config = rest; }
+      this._fire();
+    });
+    this._domBuilt = true;
   }
+
+  _update() {
+    if (!this._hass) return;
+    if (!this._domBuilt) this._buildDom();
+    const compat = findCompatible(this._hass);
+    const cur = this._config.switch || "";
+    const nm = this._config.name || "";
+    const ms = String(this._config.manual_seconds ?? 300);
+    const ae = this.shadowRoot.activeElement;
+    const hasCompat = compat.length > 0;
+
+    this._el.swWrap.hidden = !hasCompat;
+    this._el.swEmpty.hidden = hasCompat;
+
+    if (hasCompat) {
+      // Only rebuild <option>s when the compat set actually changed — avoids
+      // clobbering an open dropdown on every HA state push.
+      const key = compat.join("|");
+      if (key !== this._lastCompatKey) {
+        const t = (k) => _t(this._hass, k);
+        const opts = [`<option value="">${t("editorSelect")}</option>`];
+        for (const s of compat) {
+          const n = this._hass.states[s]?.attributes?.friendly_name || s;
+          opts.push(`<option value="${s}">${n}</option>`);
+        }
+        this._el.sw.innerHTML = opts.join("");
+        this._lastCompatKey = key;
+      }
+      if (ae !== this._el.sw && this._el.sw.value !== cur) this._el.sw.value = cur;
+    }
+
+    // Never overwrite an input the user is currently editing — that's what
+    // resets the caret and makes the dialog feel "rebuilt".
+    if (ae !== this._el.nm && this._el.nm.value !== nm) this._el.nm.value = nm;
+    if (ae !== this._el.ms && this._el.ms.value !== ms) this._el.ms.value = ms;
+  }
+
   _fire() { this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true })); }
 }
 customElements.define("irrigation-control-card-editor", IrrigationControlCardEditor);
@@ -883,6 +956,12 @@ console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.6 ", "color:white;background:#2
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
+ * v1.3.1 — Visual editor no longer steals focus while typing. HA pushes a
+ *          fresh hass object to all card editors every few seconds, and the
+ *          editor's set hass() was wholesale-replacing shadowRoot.innerHTML
+ *          on every push — destroying the focused <input> and stealing the
+ *          caret. Editor now builds its DOM once and patches values in
+ *          place, skipping inputs that have focus.
  * v1.3.0 — Offline detection rewritten + UI aligned with irrigation card.
  *          Detection: trust HA's state == "unavailable" signal (no more
  *          last_updated staleness threshold — false-positives on stable
@@ -992,21 +1071,33 @@ function smColor(value, optMin, optMax, accMin, accMax) {
 }
 
 // ── Editor ──
+// v1.3.1: build DOM once, patch values in place. HA pushes a fresh `hass`
+// object to all card editors every few seconds; the previous set hass()
+// replaced shadowRoot.innerHTML wholesale, destroying the focused <input>
+// and stealing the caret. Now editor mirrors the irrigation editor pattern:
+// _buildDom() runs once, _update() refreshes values without touching the
+// tree and skips any input that currently has focus.
+const SM_THRESHOLD_FIELDS = [
+  ["acc-min", "acc_min", 20],
+  ["acc-max", "acc_max", 80],
+  ["opt-min", "opt_min", 40],
+  ["opt-max", "opt_max", 60],
+];
 class SoilMoistureCardEditor extends HTMLElement {
-  constructor() { super(); this.attachShadow({ mode: "open" }); this._config = {}; this._hass = null; }
-  set hass(h) { this._hass = h; this._render(); }
-  setConfig(c) { this._config = { ...c }; this._render(); }
-  _render() {
-    if (!this._hass) return;
-    const compat = smFindCompatible(this._hass);
-    const cur = this._config.entity || "";
-    const nm = this._config.name || "";
-    const oMin = this._config.opt_min ?? 40;
-    const oMax = this._config.opt_max ?? 60;
-    const aMin = this._config.acc_min ?? 20;
-    const aMax = this._config.acc_max ?? 80;
-    const t = (k) => _sm(this._hass, k);
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._hass = null;
+    this._domBuilt = false;
+    this._el = {};
+    this._lastCompatKey = "";
+  }
+  set hass(h) { this._hass = h; this._update(); }
+  setConfig(c) { this._config = { ...c }; this._update(); }
 
+  _buildDom() {
+    const t = (k) => _sm(this._hass, k);
     this.shadowRoot.innerHTML = `
 <style>
 .editor{padding:16px;font-family:var(--paper-font-body1_-_font-family,sans-serif)}
@@ -1020,40 +1111,95 @@ select:focus,input:focus{border-color:#4a90d9}
 .thr-grid input[type="number"]{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--divider-color,rgba(255,255,255,.06));background:var(--card-background-color,#232640);color:var(--primary-text-color);font-size:14px;font-family:monospace;outline:none;box-sizing:border-box}
 .thr-grid input:focus{border-color:#4a90d9}
 .thr-label{font-size:11px;color:var(--disabled-text-color,#5c5e76);margin-bottom:4px}
+[hidden]{display:none!important}
 </style>
 <div class="editor">
   <div class="row">
     <label>${t("editorDevice")}</label>
-    ${compat.length > 0 ? `<select id="sw"><option value="">${t("editorSelect")}</option>${compat.map(s => {
-      const n = this._hass.states[s]?.attributes?.friendly_name || s;
-      return `<option value="${s}" ${s===cur?"selected":""}>${n}</option>`;
-    }).join("")}</select><div class="hint">${t("editorHint")}</div>` : `<div class="empty">${t("editorNoDevice")}</div>`}
+    <div id="sw-wrap">
+      <select id="sw"></select>
+      <div class="hint">${t("editorHint")}</div>
+    </div>
+    <div id="sw-empty" class="empty" hidden>${t("editorNoDevice")}</div>
   </div>
   <div class="row">
     <label>${t("editorName")}</label>
-    <input type="text" id="nm" value="${nm}" placeholder="${t("editorNamePh")}">
+    <input type="text" id="nm" placeholder="${t("editorNamePh")}">
     <div class="hint">${t("editorNameHint")}</div>
   </div>
   <div class="row">
     <label>${t("editorThresholds")}</label>
     <div class="thr-grid">
-      <div><div class="thr-label">${t("editorAccMin")}</div><input type="number" id="acc-min" value="${aMin}" min="0" max="100"></div>
-      <div><div class="thr-label">${t("editorAccMax")}</div><input type="number" id="acc-max" value="${aMax}" min="0" max="100"></div>
-      <div><div class="thr-label">${t("editorOptMin")}</div><input type="number" id="opt-min" value="${oMin}" min="0" max="100"></div>
-      <div><div class="thr-label">${t("editorOptMax")}</div><input type="number" id="opt-max" value="${oMax}" min="0" max="100"></div>
+      <div><div class="thr-label">${t("editorAccMin")}</div><input type="number" id="acc-min" min="0" max="100"></div>
+      <div><div class="thr-label">${t("editorAccMax")}</div><input type="number" id="acc-max" min="0" max="100"></div>
+      <div><div class="thr-label">${t("editorOptMin")}</div><input type="number" id="opt-min" min="0" max="100"></div>
+      <div><div class="thr-label">${t("editorOptMax")}</div><input type="number" id="opt-max" min="0" max="100"></div>
     </div>
   </div>
 </div>`;
-    this.shadowRoot.getElementById("sw")?.addEventListener("change", e => { this._config = { ...this._config, entity: e.target.value }; this._fire(); });
-    this.shadowRoot.getElementById("nm")?.addEventListener("input", e => { if (e.target.value) this._config = { ...this._config, name: e.target.value }; else { const { name, ...r } = this._config; this._config = r; } this._fire(); });
-    for (const [id, key] of [["opt-min","opt_min"],["opt-max","opt_max"],["acc-min","acc_min"],["acc-max","acc_max"]]) {
-      this.shadowRoot.getElementById(id)?.addEventListener("change", e => {
+    const r = this.shadowRoot;
+    this._el = {
+      sw: r.getElementById("sw"),
+      swWrap: r.getElementById("sw-wrap"),
+      swEmpty: r.getElementById("sw-empty"),
+      nm: r.getElementById("nm"),
+    };
+    for (const [id] of SM_THRESHOLD_FIELDS) this._el[id] = r.getElementById(id);
+
+    this._el.sw.addEventListener("change", e => {
+      this._config = { ...this._config, entity: e.target.value };
+      this._fire();
+    });
+    this._el.nm.addEventListener("input", e => {
+      if (e.target.value) this._config = { ...this._config, name: e.target.value };
+      else { const { name, ...rest } = this._config; this._config = rest; }
+      this._fire();
+    });
+    for (const [id, key] of SM_THRESHOLD_FIELDS) {
+      this._el[id].addEventListener("change", e => {
         const v = Math.max(0, Math.min(100, parseInt(e.target.value) || 0));
         this._config = { ...this._config, [key]: v };
         this._fire();
       });
     }
+    this._domBuilt = true;
   }
+
+  _update() {
+    if (!this._hass) return;
+    if (!this._domBuilt) this._buildDom();
+    const compat = smFindCompatible(this._hass);
+    const cur = this._config.entity || "";
+    const nm = this._config.name || "";
+    const ae = this.shadowRoot.activeElement;
+    const hasCompat = compat.length > 0;
+
+    this._el.swWrap.hidden = !hasCompat;
+    this._el.swEmpty.hidden = hasCompat;
+
+    if (hasCompat) {
+      const key = compat.join("|");
+      if (key !== this._lastCompatKey) {
+        const t = (k) => _sm(this._hass, k);
+        const opts = [`<option value="">${t("editorSelect")}</option>`];
+        for (const s of compat) {
+          const n = this._hass.states[s]?.attributes?.friendly_name || s;
+          opts.push(`<option value="${s}">${n}</option>`);
+        }
+        this._el.sw.innerHTML = opts.join("");
+        this._lastCompatKey = key;
+      }
+      if (ae !== this._el.sw && this._el.sw.value !== cur) this._el.sw.value = cur;
+    }
+
+    if (ae !== this._el.nm && this._el.nm.value !== nm) this._el.nm.value = nm;
+    for (const [id, key, dflt] of SM_THRESHOLD_FIELDS) {
+      const el = this._el[id];
+      const val = String(this._config[key] ?? dflt);
+      if (ae !== el && el.value !== val) el.value = val;
+    }
+  }
+
   _fire() { this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true })); }
 }
 customElements.define("soil-moisture-card-editor", SoilMoistureCardEditor);

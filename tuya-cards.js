@@ -9,6 +9,13 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.2.8 — Name field: defer config-changed to the `change` event (blur/Enter)
+ *          instead of firing per keystroke on `input`. v2.2.7 stopped the
+ *          editor from rebuilding its own DOM, but per-keystroke
+ *          config-changed still round-tripped through HA's hui-card-editor
+ *          which blurred the input mid-typing. In-memory config is still
+ *          updated on every keystroke so a Save click without prior blur
+ *          captures the typed value.
  * v2.2.7 — Visual editor no longer steals focus while typing. HA pushes a
  *          fresh hass object to all card editors every few seconds, and the
  *          editor's set hass() was wholesale-replacing shadowRoot.innerHTML
@@ -223,11 +230,16 @@ select:focus,input:focus{border-color:#4a90d9}
       this._config = { ...this._config, switch: e.target.value };
       this._fire();
     });
+    // Update the in-memory config on every keystroke so a Save click that
+    // doesn't blur the input first still captures the typed value — but only
+    // fire config-changed on `change` (blur/Enter). Firing per keystroke
+    // round-trips through HA's hui-card-editor and ends up blurring the
+    // input mid-typing, even though our _update() respects activeElement.
     this._el.nm.addEventListener("input", e => {
       if (e.target.value) this._config = { ...this._config, name: e.target.value };
       else { const { name, ...rest } = this._config; this._config = rest; }
-      this._fire();
     });
+    this._el.nm.addEventListener("change", () => this._fire());
     this._el.ms.addEventListener("change", e => {
       const v = parseInt(e.target.value);
       if (Number.isFinite(v) && v >= 30 && v <= 1800) this._config = { ...this._config, manual_seconds: v };
@@ -956,6 +968,13 @@ console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.6 ", "color:white;background:#2
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
+ * v1.3.2 — Name field: defer config-changed to the `change` event (blur/Enter)
+ *          instead of firing per keystroke on `input`. v1.3.1 stopped the
+ *          editor from rebuilding its own DOM, but per-keystroke
+ *          config-changed still round-tripped through HA's hui-card-editor
+ *          which blurred the input mid-typing. In-memory config is still
+ *          updated on every keystroke so a Save click without prior blur
+ *          captures the typed value.
  * v1.3.1 — Visual editor no longer steals focus while typing. HA pushes a
  *          fresh hass object to all card editors every few seconds, and the
  *          editor's set hass() was wholesale-replacing shadowRoot.innerHTML
@@ -1150,11 +1169,16 @@ select:focus,input:focus{border-color:#4a90d9}
       this._config = { ...this._config, entity: e.target.value };
       this._fire();
     });
+    // Update the in-memory config on every keystroke so a Save click that
+    // doesn't blur the input first still captures the typed value — but only
+    // fire config-changed on `change` (blur/Enter). Firing per keystroke
+    // round-trips through HA's hui-card-editor and ends up blurring the
+    // input mid-typing, even though our _update() respects activeElement.
     this._el.nm.addEventListener("input", e => {
       if (e.target.value) this._config = { ...this._config, name: e.target.value };
       else { const { name, ...rest } = this._config; this._config = rest; }
-      this._fire();
     });
+    this._el.nm.addEventListener("change", () => this._fire());
     for (const [id, key] of SM_THRESHOLD_FIELDS) {
       this._el[id].addEventListener("change", e => {
         const v = Math.max(0, Math.min(100, parseInt(e.target.value) || 0));

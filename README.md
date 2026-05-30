@@ -12,7 +12,7 @@ The **cards** auto-discover compatible devices from a single entity via suffix c
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + bundled ZHA quirks | v2.3.0 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + bundled ZHA quirks | v2.4.0 |
 | `irrigation-control-card` | Lovelace card driving the services above | v2.1.2 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
@@ -107,6 +107,28 @@ As long as HA shuts down gracefully (systemd stop, `ha core stop`, OS poweroff w
 You'll see one `Shutdown safety: closing open irrigation valve <entity>` WARNING per valve in the HA log when this kicks in. No configuration needed.
 
 This does **not** cover a hard power loss (kernel panic, pulled plug with no UPS) where HA has no chance to run any cleanup. For that, the UPS + OS graceful shutdown is what saves you — the integration simply rides the OS signal.
+
+---
+
+## Device actions (automation builder)
+
+When you build an automation by **selecting a device first**, any device the
+integration recognizes as an irrigation valve gains two extra actions:
+
+| Action | Field | Calls |
+| --- | --- | --- |
+| **Irriga per litri** / *Irrigate by liters* | Liters | `tuya_irrigation.irrigation_by_liters` (safety timeout fixed at 3600 s) |
+| **Irriga per tempo** / *Irrigate for a duration* | Duration (hh:mm:ss) | `tuya_irrigation.irrigation_by_seconds` |
+
+**Valve auto-detection:** a device is treated as an irrigation valve when it has
+both a `switch.*` entity and a `sensor.*` entity whose `device_class` is `volume`
+or `water`. Energy-metering sockets (`device_class=energy`) are ignored, so the
+actions only appear on real flow-metering valves — no configuration needed.
+
+Each detected valve also gets an **"Irrigazione in corso" / "Irrigating"**
+`binary_sensor` attached to its device, which is `on` while a server-side
+irrigation timer is running. This is the association that lets the device actions
+appear, and it gives live feedback during irrigation.
 
 ---
 

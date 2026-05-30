@@ -9,5 +9,22 @@
     "abort": {
       "already_configured": "Tuya Irrigation è già configurato."
     }
+  },
+  "device_automation": {
+    "action_type": {
+      "irrigate_liters": "Irriga per litri",
+      "irrigate_seconds": "Irriga per tempo"
+    },
+    "extra_fields": {
+      "liters": "Litri",
+      "duration": "Durata"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "irrigating": {
+        "name": "Irrigazione in corso"
+      }
+    }
   }
 }

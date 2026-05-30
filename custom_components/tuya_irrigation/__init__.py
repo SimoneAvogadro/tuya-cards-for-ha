@@ -19,9 +19,10 @@ import voluptuous as vol
 
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.setup import async_when_setup
 
@@ -38,6 +39,7 @@ from .const import (
     SUMMATION_SUFFIX,
     URL_BASE,
     VERSION,
+    running_signal,
 )
 
 # Import for side-effect: registers bundled ZHA quirks into zigpy's global
@@ -46,6 +48,8 @@ from .const import (
 from . import quirks  # noqa: F401, E402
 
 _LOGGER = logging.getLogger(__name__)
+
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR]
 
 SECONDS_SCHEMA = vol.Schema(
     {
@@ -83,6 +87,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await _async_register_frontend(hass)
     _async_register_services(hass, active_tasks, managed_switches)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     async def _async_stop(event) -> None:
         """On HA shutdown, close every valve this integration opened."""
@@ -97,6 +102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Close open valves, cancel running tasks, unregister services."""
+    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     domain_data = hass.data.get(DOMAIN, {})
     active_tasks: dict[str, asyncio.Task] = domain_data.get("active_tasks", {})
     managed_switches: set[str] = domain_data.get("managed_switches", set())
@@ -280,6 +286,7 @@ def _async_register_services(
     async def _run_seconds(switch_entity: str, seconds: int) -> None:
         """Sleep for `seconds`, then close the valve. Cancellation-safe."""
         my_task = asyncio.current_task()
+        async_dispatcher_send(hass, running_signal(switch_entity), True)
         _LOGGER.info("Irrigation on %s for %d seconds (started)", switch_entity, seconds)
         try:
             await asyncio.sleep(seconds)
@@ -289,9 +296,11 @@ def _async_register_services(
             raise
         finally:
             # Only touch the valve + dict if we are still the registered task.
-            # If a newer call has replaced us, it is responsible for the valve.
+            # If a newer call has replaced us, it is responsible for the valve
+            # (and keeps the running signal True), so we must not clear it.
             if active_tasks.get(switch_entity) is my_task:
                 active_tasks.pop(switch_entity, None)
+                async_dispatcher_send(hass, running_signal(switch_entity), False)
                 await _turn_off(switch_entity)
 
     async def _run_liters(
@@ -302,6 +311,7 @@ def _async_register_services(
     ) -> None:
         """Turn valve on, watch summation_delivered, close when target reached."""
         my_task = asyncio.current_task()
+        async_dispatcher_send(hass, running_signal(switch_entity), True)
         start_state = hass.states.get(summation_entity)
         try:
             start_volume = float(start_state.state) if start_state else 0.0
@@ -350,6 +360,7 @@ def _async_register_services(
             unsub()
             if active_tasks.get(switch_entity) is my_task:
                 active_tasks.pop(switch_entity, None)
+                async_dispatcher_send(hass, running_signal(switch_entity), False)
                 await _turn_off(switch_entity)
 
     async def _handle_seconds(call: ServiceCall) -> None:

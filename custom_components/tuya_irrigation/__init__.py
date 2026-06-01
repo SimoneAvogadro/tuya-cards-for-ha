@@ -312,16 +312,25 @@ def _async_register_services(
         """Turn valve on, watch summation_delivered, close when target reached."""
         my_task = asyncio.current_task()
         async_dispatcher_send(hass, running_signal(switch_entity), True)
+
+        # summation_delivered on these valves is a PER-SESSION counter that resets
+        # to 0 shortly after the valve opens (verified on _TZE200_a7sghmms); it can
+        # also still hold the previous session's value at open time. So we do not
+        # treat the sensor as an absolute lifetime total — instead we accumulate the
+        # volume delivered since we started, treating any decrease in the reading as
+        # a counter reset (matching HA's total_increasing semantics). This is robust
+        # whether the device resets per session or accumulates across sessions.
         start_state = hass.states.get(summation_entity)
         try:
-            start_volume = float(start_state.state) if start_state else 0.0
+            prev_reading = float(start_state.state) if start_state else 0.0
         except (TypeError, ValueError):
-            start_volume = 0.0
-        target_volume = start_volume + liters
+            prev_reading = 0.0
+        delivered = 0.0
         done = asyncio.Event()
 
         @callback
         def _listener(event) -> None:
+            nonlocal prev_reading, delivered
             new_state = event.data.get("new_state")
             if new_state is None or new_state.state in ("unknown", "unavailable"):
                 return
@@ -329,21 +338,27 @@ def _async_register_services(
                 current = float(new_state.state)
             except (TypeError, ValueError):
                 return
-            if current >= target_volume:
+            if current >= prev_reading:
+                delivered += current - prev_reading
+            else:
+                # Counter reset (e.g. device zeroed for a new session): the
+                # increment since the reset is the new value itself.
+                delivered += current
+            prev_reading = current
+            if delivered >= liters:
                 _LOGGER.info(
-                    "%s reached target: %.3f >= %.3f",
+                    "%s reached target: delivered %.3f >= %.3f L",
                     summation_entity,
-                    current,
-                    target_volume,
+                    delivered,
+                    liters,
                 )
                 done.set()
 
         unsub = async_track_state_change_event(hass, [summation_entity], _listener)
         _LOGGER.info(
-            "Irrigation on %s for %.3f L (target %.3f, timeout %ds, started)",
+            "Irrigation on %s for %.3f L (timeout %ds, started)",
             switch_entity,
             liters,
-            target_volume,
             timeout_seconds,
         )
         try:

@@ -33,6 +33,12 @@ What this file does:
   `custom_quirks_path` after upstream zha-device-handlers, so our entry
   takes precedence.
 
+  It also overrides the `irrigation_start_time` / `irrigation_end_time` DPs
+  (101/102): upstream builds these timestamps with a hardcoded +04:00 offset
+  and the timestamp sensor errors at HA startup when the persisted value is
+  restored as a string. Our `_giex_time_to_dt` builds the datetime in HA's
+  local timezone and tolerates an already-formatted string on restore.
+
 Deploy:
   1. In `configuration.yaml` make sure ZHA points to a custom quirks path:
         zha:
@@ -77,9 +83,13 @@ Compatibility note:
 from __future__ import annotations
 
 import datetime
+import re
 
 import zigpy.types as t
 from zigpy.quirks.v2.homeassistant import UnitOfTime
+from zigpy.quirks.v2.homeassistant.sensor import SensorDeviceClass
+
+from homeassistant.util import dt as dt_util
 
 from zhaquirks.tuya.mcu import TuyaMCUCluster
 from zhaquirks.tuya.tuya_valve import gx02_base_quirk
@@ -101,6 +111,49 @@ class GiexEpoch2000MCUCluster(TuyaMCUCluster):
 
 # Matches upstream tuya_valve.py: 12 hours expressed as seconds.
 _GIEX_12HRS_AS_SEC = 12 * 60 * 60
+
+
+# Regex for the device's wall-clock report, e.g. "10:55:28".
+_GIEX_HHMMSS_RE = re.compile(r"^\s*(\d{1,2}):(\d{2}):(\d{2})\s*$")
+
+
+def _giex_time_to_dt(value) -> datetime.datetime | None:
+    """Convert the GiEX start/end time DP to a tz-aware datetime.
+
+    The device reports only a wall-clock "HH:MM:SS"; the upstream converter
+    fabricates "today at HH:MM:SS" but hardcodes a +04:00 offset that ignores
+    the HA timezone. We instead build it in HA's configured local timezone.
+
+    We also accept an already-formatted datetime / ISO string, because at HA
+    startup the persisted state value may be handed back as a string rather
+    than re-running through this converter. Anything unparseable (including the
+    device's initial "--:--:--") returns None.
+    """
+    if value is None:
+        return None
+    # Already a datetime (defensive): return as-is.
+    if isinstance(value, datetime.datetime):
+        return value
+    text = str(value).strip()
+    if not text or text.startswith("--"):
+        return None
+    # Normal device report: "HH:MM:SS" -> today (HA local tz) at that time.
+    match = _GIEX_HHMMSS_RE.match(text)
+    if match:
+        hour, minute, second = (int(g) for g in match.groups())
+        if hour > 23 or minute > 59 or second > 59:
+            return None
+        now_local = dt_util.now()
+        return now_local.replace(
+            hour=hour, minute=minute, second=second, microsecond=0
+        )
+    # Restore case: an already-formatted datetime/ISO string.
+    parsed = dt_util.parse_datetime(text)
+    if parsed is not None:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+        return parsed
+    return None
 
 
 # Re-register the upstream GX02 quirk with our MCU cluster as replacement.
@@ -135,6 +188,27 @@ _GIEX_12HRS_AS_SEC = 12 * 60 * 60
         unit=UnitOfTime.SECONDS,
         translation_key="irrigation_interval",
         fallback_name="Irrigation interval",
+    )
+    # Override upstream dp 101/102: build the datetime in HA's local timezone
+    # (upstream hardcodes +04:00) and tolerate the string handed back on
+    # restore so the timestamp sensor doesn't error at startup.
+    .tuya_sensor(
+        dp_id=101,
+        attribute_name="irrigation_start_time",
+        type=t.CharacterString,
+        converter=lambda x: _giex_time_to_dt(x),
+        device_class=SensorDeviceClass.TIMESTAMP,
+        translation_key="irrigation_start_time",
+        fallback_name="Irrigation start time",
+    )
+    .tuya_sensor(
+        dp_id=102,
+        attribute_name="irrigation_end_time",
+        type=t.CharacterString,
+        converter=lambda x: _giex_time_to_dt(x),
+        device_class=SensorDeviceClass.TIMESTAMP,
+        translation_key="irrigation_end_time",
+        fallback_name="Irrigation end time",
     )
     .add_to_registry(replacement_cluster=GiexEpoch2000MCUCluster)
 )

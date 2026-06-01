@@ -33,6 +33,16 @@ What this file does:
   `custom_quirks_path` after upstream zha-device-handlers, so our entry
   takes precedence.
 
+  It also fixes the `irrigation_start_time` / `irrigation_end_time` DPs
+  (101/102) by replacing the module-level `giex_string_to_dt` converter that
+  upstream's DP lambdas look up by name: upstream hardcodes a +04:00 offset and
+  the timestamp sensor errors at HA startup when the persisted value is restored
+  as a string. Our replacement builds the datetime in HA's local timezone and
+  tolerates already-formatted / restored values. We patch the converter (not the
+  DP map) because re-mapping an already-defined DP raises in the QuirksV2 builder
+  and would break the integration; the patch is guarded so an upstream rename
+  degrades to "tz not fixed", never a crash.
+
 Deploy:
   1. In `configuration.yaml` make sure ZHA points to a custom quirks path:
         zha:
@@ -77,12 +87,19 @@ Compatibility note:
 from __future__ import annotations
 
 import datetime
+import logging
+import re
 
 import zigpy.types as t
 from zigpy.quirks.v2.homeassistant import UnitOfTime
 
+from homeassistant.util import dt as dt_util
+
+import zhaquirks.tuya.tuya_valve as _tuya_valve
 from zhaquirks.tuya.mcu import TuyaMCUCluster
 from zhaquirks.tuya.tuya_valve import gx02_base_quirk
+
+_LOGGER = logging.getLogger(__name__)
 
 
 # Tuya epoch: 2000-01-01 UTC. The default in upstream TuyaMCUCluster is
@@ -101,6 +118,72 @@ class GiexEpoch2000MCUCluster(TuyaMCUCluster):
 
 # Matches upstream tuya_valve.py: 12 hours expressed as seconds.
 _GIEX_12HRS_AS_SEC = 12 * 60 * 60
+
+
+# --- start/end time converter fix ----------------------------------------
+#
+# Upstream gx02_base_quirk maps DP 101 (irrigation_start_time) and DP 102
+# (irrigation_end_time) with `converter=lambda x: giex_string_to_dt(x)`, a
+# TIMESTAMP sensor. The upstream `giex_string_to_dt` has two bugs:
+#   1. It hardcodes a +04:00 timezone, ignoring the HA-configured zone.
+#   2. On HA restart the persisted state comes back as a *string* into the
+#      timestamp sensor, which raises "'str' object has no attribute 'tzinfo'".
+#
+# We cannot re-map DP 101/102 in our clone (the QuirksV2 builder raises
+# "DP <id> is already mapped" and that would break the whole integration).
+# Instead we replace the module-level `giex_string_to_dt` that the upstream
+# lambda looks up by name at call time. Because the lambda resolves the global
+# on each call (and clone()'s deepcopy shares __globals__), our replacement is
+# honoured by the cloned quirk without touching the DP map.
+_GIEX_HHMMSS_RE = re.compile(r"^\s*(\d{1,2}):(\d{2}):(\d{2})\s*$")
+
+
+def _giex_string_to_dt(value) -> datetime.datetime | None:
+    """TZ-correct, restore-tolerant replacement for upstream giex_string_to_dt.
+
+    - Device report "HH:MM:SS" -> today at that time in HA's local timezone.
+    - Already a datetime (or an ISO string restored at startup) -> returned as
+      a tz-aware datetime.
+    - "--:--:--", empty, or anything unparseable -> None (the upstream sentinel).
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime.datetime):
+        # Defensive: ensure tz-aware so the timestamp sensor never sees a naive
+        # or string value.
+        if value.tzinfo is None:
+            return value.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+        return value
+    text = str(value).strip()
+    if not text or text.startswith("--"):
+        return None
+    match = _GIEX_HHMMSS_RE.match(text)
+    if match:
+        hour, minute, second = (int(g) for g in match.groups())
+        if hour > 23 or minute > 59 or second > 59:
+            return None
+        return dt_util.now().replace(
+            hour=hour, minute=minute, second=second, microsecond=0
+        )
+    # Restore case: an already-formatted datetime/ISO string.
+    parsed = dt_util.parse_datetime(text)
+    if parsed is not None:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+        return parsed
+    return None
+
+
+# Apply the patch defensively: if upstream renames or inlines the converter,
+# log and skip rather than raising at import time (which would take the whole
+# integration down). Worst case is "tz not fixed", never "integration broken".
+if hasattr(_tuya_valve, "giex_string_to_dt"):
+    _tuya_valve.giex_string_to_dt = _giex_string_to_dt
+else:  # pragma: no cover - guards against upstream API drift
+    _LOGGER.warning(
+        "zhaquirks.tuya.tuya_valve.giex_string_to_dt not found; GiEX "
+        "start/end time timezone fix not applied (upstream API changed)"
+    )
 
 
 # Re-register the upstream GX02 quirk with our MCU cluster as replacement.

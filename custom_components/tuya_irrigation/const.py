@@ -1,7 +1,7 @@
 """Constants for the Tuya Irrigation integration."""
 
 DOMAIN = "tuya_irrigation"
-VERSION = "2.4.2"
+VERSION = "2.4.3"
 
 # URL under which the integration serves static files (bundled Lovelace card JS).
 URL_BASE = f"/{DOMAIN}"

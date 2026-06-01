@@ -112,29 +112,13 @@ class GiexEpoch2000MCUCluster(TuyaMCUCluster):
     """TuyaMCUCluster that answers MCU set_time using the 2000-01-01 epoch
     that the GiEX QT06 firmware family expects, instead of 1970-01-01.
 
-    It also pushes the time PROACTIVELY at bind (device configure / join /
-    Reconfigure). The GiEX RTC drifts badly and this firmware never sends a
-    time-sync request on its own, so the request-driven upstream response never
-    fires. `handle_set_time_request` ignores its payload argument (debug log
-    only) and emits command 0x24 with the current UTC+local time using the
-    2000-epoch offsets above, so we can invoke it unsolicited.
+    The actual proactive time push now happens from the integration's services
+    just before opening the valve (see _async_push_device_time), because ZHA does
+    not call bind() on this manufacturer-specific 0xEF00 cluster.
     """
 
     set_time_offset = _TUYA_EPOCH_UTC
     set_time_local_offset = _TUYA_EPOCH_LOCAL
-
-    async def bind(self):
-        """Bind as usual, then proactively push the current time to the device."""
-        result = await super().bind()
-        # Guarded: a push failure must never disturb binding or break the
-        # integration (cf. the v2.4.2 MCU-cluster incident). handle_set_time_request
-        # is sync and schedules its own send task, so it is not awaited.
-        try:
-            self.handle_set_time_request(0)
-            self.debug("GiEX proactive time push sent on bind")
-        except Exception as err:  # pragma: no cover - defensive
-            self.debug("GiEX proactive time push on bind failed: %s", err)
-        return result
 
 
 # Matches upstream tuya_valve.py: 12 hours expressed as seconds.

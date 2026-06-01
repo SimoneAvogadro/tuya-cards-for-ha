@@ -49,6 +49,11 @@ from . import quirks  # noqa: F401, E402
 
 _LOGGER = logging.getLogger(__name__)
 
+# Seconds to wait after pushing the device clock before opening the valve, so the
+# Tuya MCU applies the pushed time before it stamps irrigation_start_time. The
+# 0x24 time command is fire-and-forget (no ack), hence a fixed settle delay.
+_TIME_SYNC_SETTLE = 1.5
+
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR]
 
 SECONDS_SCHEMA = vol.Schema(
@@ -257,6 +262,54 @@ async def _async_register_lovelace_resource(
             )
 
 
+async def _async_push_device_time(hass: HomeAssistant, switch_entity: str) -> None:
+    """Best-effort: push the current time to a Tuya valve's MCU before opening it.
+
+    The GiEX RTC drifts and the device never requests a sync, so its
+    start/end-time stamps are wrong. We reach the device's zigpy 0xEF00 cluster
+    via the ZHA gateway and call handle_set_time_request(0), which emits Tuya
+    command 0x24 with the current time using the quirk's 2000 epoch.
+
+    Fully guarded: any failure (ZHA absent, device not found, API drift) is
+    logged and swallowed — pushing the time must never block or fail irrigation.
+    """
+    try:
+        from homeassistant.components.zha.helpers import get_zha_gateway
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+        from zigpy.types import EUI64
+
+        ent_reg = er.async_get(hass)
+        entry = ent_reg.async_get(switch_entity)
+        if entry is None or entry.device_id is None:
+            _LOGGER.debug("Time push: no registry entry for %s", switch_entity)
+            return
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get(entry.device_id)
+        if device is None:
+            _LOGGER.debug("Time push: no device for %s", switch_entity)
+            return
+        ieee_str = next(
+            (c[1] for c in device.connections if c[0] == dr.CONNECTION_ZIGBEE),
+            None,
+        )
+        if ieee_str is None:
+            ieee_str = next(
+                (i[1] for i in device.identifiers if i[0] == "zha"), None
+            )
+        if ieee_str is None:
+            _LOGGER.debug("Time push: no IEEE for %s", switch_entity)
+            return
+
+        gateway = get_zha_gateway(hass)
+        zha_device = gateway.get_device(EUI64.convert(ieee_str))
+        cluster = zha_device.device.endpoints[1].in_clusters[0xEF00]
+        cluster.handle_set_time_request(0)
+        _LOGGER.info("Pushed device time to %s (ieee %s)", switch_entity, ieee_str)
+    except Exception as err:  # noqa: BLE001 - best-effort, never block irrigation
+        _LOGGER.warning("Time push to %s failed (non-fatal): %s", switch_entity, err)
+
+
 def _async_register_services(
     hass: HomeAssistant,
     active_tasks: dict[str, asyncio.Task],
@@ -391,10 +444,12 @@ def _async_register_services(
 
         _cancel_existing(switch_entity)
         managed_switches.add(switch_entity)
-        # Create and register the task BEFORE any await, so the cancelled old
-        # task (whose finally block will run during our first await) sees that
-        # it is no longer the registered task and skips turning off the valve
-        # that we are about to open.
+        # Sync the device clock before opening so it stamps start/end time with a
+        # correct RTC. Best-effort; runs before we create our task, so a cancelled
+        # old task's finally (running during these awaits) still closes the valve
+        # cleanly before we open ours.
+        await _async_push_device_time(hass, switch_entity)
+        await asyncio.sleep(_TIME_SYNC_SETTLE)
         task = hass.async_create_task(_run_seconds(switch_entity, seconds))
         active_tasks[switch_entity] = task
         await _turn_on(switch_entity)
@@ -424,6 +479,9 @@ def _async_register_services(
 
         _cancel_existing(switch_entity)
         managed_switches.add(switch_entity)
+        # Sync the device clock before opening (best-effort) — see _handle_seconds.
+        await _async_push_device_time(hass, switch_entity)
+        await asyncio.sleep(_TIME_SYNC_SETTLE)
         task = hass.async_create_task(
             _run_liters(switch_entity, liters, timeout_seconds, summation_entity)
         )

@@ -381,6 +381,37 @@ def _async_register_services(
             _LOGGER.info("Cancelling running irrigation task on %s", switch_entity)
             existing.cancel()
 
+    async def _async_begin_run(
+        switch_entity: str, mode: str, target: int, run_coro
+    ) -> None:
+        """Shared start sequence for both irrigation services.
+
+        All three entry points (card, service call, device action) funnel through
+        the two services, and both services funnel through here — so the start
+        logic lives in exactly one place.
+
+        Order matters: write the run plan (MODE+TARGET DPs) and sync the device
+        clock, wait the settle, THEN start the monitoring task and open the valve
+        last. That way the device stamps start_time/end_time with the target + a
+        correct RTC (it computes end_time = start + target). Both pushes are
+        best-effort and never block irrigation; the server-side `run_coro` task
+        still owns closing the valve regardless of the device's native auto-off.
+
+        `run_coro` is the (already-created, not-yet-scheduled) `_run_seconds` /
+        `_run_liters` coroutine; it is scheduled here after the settle. Cancelling
+        any in-flight run runs before we register ours, so the cancelled task's
+        finally (executing during these awaits) closes the valve cleanly before we
+        open ours.
+        """
+        _cancel_existing(switch_entity)
+        managed_switches.add(switch_entity)
+        await _async_push_run_plan(hass, switch_entity, mode, target)
+        await _async_push_device_time(hass, switch_entity)
+        await asyncio.sleep(_TIME_SYNC_SETTLE)
+        task = hass.async_create_task(run_coro)
+        active_tasks[switch_entity] = task
+        await _turn_on(switch_entity)
+
     async def _run_seconds(switch_entity: str, seconds: int) -> None:
         """Sleep for `seconds`, then close the valve. Cancellation-safe."""
         my_task = asyncio.current_task()
@@ -487,21 +518,9 @@ def _async_register_services(
             )
             return
 
-        _cancel_existing(switch_entity)
-        managed_switches.add(switch_entity)
-        # Write MODE + TARGET so the device echoes them back and computes
-        # end_time = start + target (the card reads these for the progress bar).
-        # Display-only; our task below still closes the valve. Best-effort.
-        await _async_push_run_plan(hass, switch_entity, "Duration", seconds)
-        # Sync the device clock before opening so it stamps start/end time with a
-        # correct RTC. Best-effort; runs before we create our task, so a cancelled
-        # old task's finally (running during these awaits) still closes the valve
-        # cleanly before we open ours.
-        await _async_push_device_time(hass, switch_entity)
-        await asyncio.sleep(_TIME_SYNC_SETTLE)
-        task = hass.async_create_task(_run_seconds(switch_entity, seconds))
-        active_tasks[switch_entity] = task
-        await _turn_on(switch_entity)
+        await _async_begin_run(
+            switch_entity, "Duration", seconds, _run_seconds(switch_entity, seconds)
+        )
 
     async def _handle_liters(call: ServiceCall) -> None:
         switch_entity: str = call.data[ATTR_SWITCH_ENTITY]
@@ -526,20 +545,12 @@ def _async_register_services(
             )
             return
 
-        _cancel_existing(switch_entity)
-        managed_switches.add(switch_entity)
-        # Write MODE=Capacity + TARGET (liters) so the device echoes them back for
-        # the card's liters progress bar. Display-only; the summation monitor below
-        # is what actually closes the valve at target. Best-effort.
-        await _async_push_run_plan(hass, switch_entity, "Capacity", int(round(liters)))
-        # Sync the device clock before opening (best-effort) — see _handle_seconds.
-        await _async_push_device_time(hass, switch_entity)
-        await asyncio.sleep(_TIME_SYNC_SETTLE)
-        task = hass.async_create_task(
-            _run_liters(switch_entity, liters, timeout_seconds, summation_entity)
+        await _async_begin_run(
+            switch_entity,
+            "Capacity",
+            int(round(liters)),
+            _run_liters(switch_entity, liters, timeout_seconds, summation_entity),
         )
-        active_tasks[switch_entity] = task
-        await _turn_on(switch_entity)
 
     hass.services.async_register(
         DOMAIN, SERVICE_IRRIGATION_BY_SECONDS, _handle_seconds, schema=SECONDS_SCHEMA

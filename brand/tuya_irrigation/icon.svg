@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Tuya Irrigation</title>
+  <!-- Teardrop traced with four cubics: pointy top, bulbous bottom. Flat
+       Material Blue 500 to match the visual register of brands.home-assistant.io -->
+  <path d="M 128 24
+           C 88 64, 48 128, 48 168
+           C 48 212, 84 248, 128 248
+           C 172 248, 208 212, 208 168
+           C 208 128, 168 64, 128 24 Z"
+        fill="#2196F3"/>
+  <!-- Subtle wet sheen on the lower-left, low-opacity white so it survives both light and dark backgrounds -->
+  <path d="M 92 168 C 80 184, 80 208, 96 220"
+        stroke="#FFFFFF" stroke-opacity="0.5" stroke-width="10" stroke-linecap="round" fill="none"/>
+</svg>

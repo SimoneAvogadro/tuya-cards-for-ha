@@ -21,8 +21,8 @@ A third quirk for the `_TZ3000_fdxihpp7` / `_TZ3000_mkhkxx1p` (TS0001 switch) is
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + bundled ZHA quirks | v2.5.1 |
-| `irrigation-control-card` | Lovelace card driving the services above | v2.5.1 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + bundled ZHA quirks | v2.5.2 |
+| `irrigation-control-card` | Lovelace card driving the services above | v2.5.2 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
 ## Installation (HACS)

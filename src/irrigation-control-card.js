@@ -1,6 +1,11 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.5.1 — "Arresto…" overlay on stop, symmetric to the start overlay. Pressing
+ *          stop covers the action panel (intercepting clicks) until the switch
+ *          confirms off, with a 10s watchdog → "Arresto fallito". Prevents a
+ *          double-tap or a tab-switch + restart from racing the close delay into
+ *          an inconsistent state. i18n: stopping/stopFailed (it/en/zh).
  * v2.5.0 — Progress bar is now derived from device truth instead of a client-side
  *          setInterval counter. The integration writes the device's MODE +
  *          TARGET DPs at run start, so the device echoes them back and computes

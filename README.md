@@ -12,8 +12,8 @@ The **cards** auto-discover compatible devices from a single entity via suffix c
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + bundled ZHA quirks | v2.4.0 |
-| `irrigation-control-card` | Lovelace card driving the services above | v2.1.2 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + bundled ZHA quirks | v2.5.0 |
+| `irrigation-control-card` | Lovelace card driving the services above | v2.5.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
 ## Installation (HACS)
@@ -23,7 +23,7 @@ The **cards** auto-discover compatible devices from a single entity via suffix c
 3. **Immediately** search "Tuya Irrigation" in HACS → open it → **Download** the latest version. Do not restart Home Assistant before this step — see note below.
 4. **Restart Home Assistant**.
 5. Settings → Devices & Services → **Add Integration** → search "Tuya Irrigation" → Submit (no inputs required).
-6. The card bundle is served automatically by the integration and auto-registered as a Lovelace resource (only in *storage* mode, the default). Hard-refresh your browser (Ctrl+Shift+R). You'll see `Registered Lovelace resource: /tuya_irrigation/tuya-cards.js?v=2.1.0` in the HA logs on first boot — if not (e.g. dashboard in YAML mode), add that URL manually under Settings → Dashboards → Resources (type: module).
+6. The card bundle is served automatically by the integration and auto-registered as a Lovelace resource (only in *storage* mode, the default). Hard-refresh your browser (Ctrl+Shift+R). You'll see `Registered Lovelace resource: /tuya_irrigation/tuya-cards.js?v=2.5.0` in the HA logs on first boot — if not (e.g. dashboard in YAML mode), add that URL manually under Settings → Dashboards → Resources (type: module).
 
 > ⚠️ **Do not restart between steps 2 and 3.** HACS 2.x removes custom repositories that are registered but not yet downloaded during every startup (it logs `Unregister stale custom repository`). If you add the repo and restart before downloading, the repo disappears from the custom list and you have to add it again. Click **Download** first — from then on the repo persists across restarts.
 
@@ -34,7 +34,7 @@ v1.x was distributed as a pure dashboard (Lovelace-only) HACS repo. v2.0.0 is no
 1. Remove the old Lovelace resource pointing to `/hacsfiles/tuya-cards-for-ha/tuya-cards.js` or `/local/tuya-cards.js`.
 2. HACS → remove the old installation.
 3. Re-add this repo as **Integration** and install (see above).
-4. After HA restart, the new resource `/tuya_irrigation/tuya-cards.js?v=2.1.0` will be registered automatically.
+4. After HA restart, the new resource `/tuya_irrigation/tuya-cards.js?v=2.5.0` will be registered automatically.
 5. Existing `custom:irrigation-control-card` YAML keeps working. The cycles/interval UI is hidden for now (planned re-enablement once the integration supports scheduling).
 
 ### Manual install (no HACS)
@@ -96,6 +96,7 @@ Example:
 - Calling a service on a switch that is already being irrigated **cancels** the previous task and starts a new one.
 - When a task is cancelled (or HA shuts down), its `finally` block still calls `switch.turn_off` — the valve will not be left open.
 - During a run, pressing the stop button on the card or calling `switch.turn_off` directly aborts the task and closes the valve cleanly.
+- At the start of each run the integration also writes the device's irrigation **mode** (`Duration` / `Capacity`) and **target** (seconds or liters) — best-effort, display-only. The valve echoes them back and computes `irrigation_end_time = start + target`, which the card reads to render its device-truth progress bar (also for automation-started runs). The server-side task still owns closing the valve; these writes never block irrigation if they fail. *(On a GiEX QT06 with a synced clock the device may now also auto-close at the target — harmless, since our `turn_off` fires at the same moment.)*
 
 ### Shutdown safety
 
@@ -155,7 +156,7 @@ Compact card for Tuya smart irrigation valves. Replaces a handful of scattered e
 ### Features
 
 - **Dual-mode manual irrigation**: by liters or by seconds — both dispatched server-side via the integration.
-- **Live countdown**: visual feedback while the integration's server-side timer runs.
+- **Device-truth progress bar**: the running countdown (Tempo) and the volume bar (Liters) are derived from the device's own telemetry, not a client-side timer. The Tempo bar uses `irrigation_end_time − irrigation_start_time` (the valve sets `end_time = start + target` immediately on a duration run); the Liters bar uses `summation_delivered / target`. This survives a browser refresh, stays in sync across tabs, never drifts, and shows progress even for runs started by an **automation** rather than the card.
 - **History**: last irrigation volume + duration + relative timestamp, collapsible start/end times.
 - **Auto-discovery**: from a single switch entity, builds all companion entity IDs via suffix convention.
 - **Visual editor**: dropdown shows only switches with all required companion entities.

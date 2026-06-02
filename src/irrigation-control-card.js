@@ -1,6 +1,18 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.5.0 — Progress bar is now derived from device truth instead of a client-side
+ *          setInterval counter. The integration writes the device's MODE +
+ *          TARGET DPs at run start, so the device echoes them back and computes
+ *          irrigation_end_time = start + target. Tempo bar uses end_time -
+ *          start_time (the device's own projected end, set immediately on a
+ *          duration run); a NEW liters bar uses summation_delivered / target.
+ *          The switch stays the single source of truth for the running state and
+ *          play/stop button; the "Avvio…" overlay covers the open delay and
+ *          clears once the device reports the run. Survives a browser refresh and
+ *          reflects automation-started runs (a stale-start_time guard covers the
+ *          ~1.5s open gap). Fixes the v2.4.x bug where the tempo countdown/bar
+ *          never appeared after the valve opened.
  * v2.2.8 — Name field: defer config-changed to the `change` event (blur/Enter)
  *          instead of firing per keystroke on `input`. v2.2.7 stopped the
  *          editor from rebuilding its own DOM, but per-keystroke

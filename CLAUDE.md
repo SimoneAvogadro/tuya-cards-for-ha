@@ -64,6 +64,8 @@ Registered in `_async_register_services` (called from `async_setup_entry`):
 
 Both services cancel any previously-running task on the same switch. The cancelled task checks `active_tasks[switch] is my_task` in its `finally` before touching the valve, so the cancellation does not disturb the new task.
 
+Before opening the valve, each handler also calls `_async_push_run_plan(hass, switch_entity, mode, target)` (`"Duration"`/seconds for by_seconds, `"Capacity"`/liters for by_liters), which writes the device's `select.<prefix>_irrigation_mode` + `number.<prefix>_irrigation_target` via the `select`/`number` services. This is **display-only**: the device echoes the values back and computes `irrigation_end_time = start + target`, which the card reads for its device-truth progress bar. It is best-effort and fully guarded (mirrors `_async_push_device_time`) — it never blocks irrigation, and the server-side task still owns closing the valve (the firmware's native auto-off is not trusted). NOTE: this is a runtime entity write, NOT a quirk DP re-map, so it does not hit the "DP already mapped" failure mode. Then `_async_push_device_time` syncs the RTC and a `_TIME_SYNC_SETTLE` sleep precedes `turn_on`.
+
 Every service call also adds the switch entity to `managed_switches: set[str]` in `hass.data[DOMAIN]`. On `EVENT_HOMEASSISTANT_STOP` and on `async_unload_entry`, `_async_close_all_valves` runs a two-pass sweep: (1) cancel active timer tasks so their own `finally: turn_off` runs; (2) explicit `switch.turn_off` for every entity in `managed_switches` that HA still reports as `on`. Pass 2 is the safety net for the case where pass 1's cancellation was cut short or a prior turn-off silently failed. Logs one `Shutdown safety: closing open irrigation valve <entity>` WARNING per valve when it triggers.
 
 ## Card rules
@@ -76,6 +78,7 @@ Every service call also adds the switch entity to `managed_switches: set[str]` i
 - **Labels in Italian by default**, with EN / ZH via `localStorage.selectedLanguage`.
 - **Visual editor** — each card must implement `getConfigElement()` showing only compatible devices.
 - **Irrigation card calls the integration's services**, never the underlying `number.set_value` + `switch.turn_on` sequence directly. A graceful banner appears if the integration is missing.
+- **Switch is the single source of truth** for the running state (badge + play/stop button). The progress bar is **device-derived**, not a client `setInterval` counter: Tempo uses `end_time − start_time`, Liters uses `summation_delivered / target` (the integration writes mode/target so these are populated — see Integration services). A 1 s render tick (`_startTick`) only re-renders; values are recomputed from device state each time, so the bar survives a browser refresh, reflects automation-started runs, and never drifts. The `_startPressedAt` stale-`start_time` guard covers the ~1.5 s open delay; the "Avvio…" overlay (`_beginStarting`, 10 s watchdog) covers it visually.
 
 ## Adding a new card
 

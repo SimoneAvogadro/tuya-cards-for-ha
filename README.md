@@ -2,11 +2,20 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
-Custom Home Assistant integration **plus** two Lovelace cards for Tuya-based smart devices paired via ZHA or Zigbee2MQTT.
+Home Assistant custom **integration** + two **Lovelace cards** for specific Tuya Zigbee devices (ZHA / Zigbee2MQTT). The integration adds reliable server-side irrigation services and bundled ZHA quirks; each supported device gets a compact dedicated card.
 
-The **integration** exposes two server-side services (`irrigation_by_seconds`, `irrigation_by_liters`) that reliably open and close an irrigation valve on a timer or by delivered volume — working around buggy valve firmware (e.g. GiEX QT06 / `_TZE200_a7sghmms`) that silently ignores its own auto-off timer under ZHA.
+## Supported devices
 
-The **cards** auto-discover compatible devices from a single entity via suffix conventions — no manual entity configuration needed.
+This project targets two devices in particular — and ships a dedicated Lovelace card for each:
+
+| Device | Exact models | What you get |
+|---|---|---|
+| **GiEX QT06 smart irrigation valve** | TS0601 — `_TZE200_a7sghmms`, `_TZE204_a7sghmms`, `_TZE200_7ytb3h8u`, `_TZE204_7ytb3h8u`, `_TZE284_7ytb3h8u` | `irrigation_by_seconds` / `irrigation_by_liters` services + `irrigation-control-card` + a quirk that fixes clock-sync and start/end-time stamps |
+| **HOBEIAN ZG-303Z 3-in-1 soil sensor** (Excellux) | `HOBEIAN ZG-303Z` | `soil-moisture-card` (soil moisture + temperature + air humidity) + a DP-mapping quirk |
+
+A third quirk for the `_TZ3000_fdxihpp7` / `_TZ3000_mkhkxx1p` (TS0001 switch) is also bundled — see [Bundled ZHA quirks](#bundled-zha-quirks). Cards auto-discover their entities from a single primary entity, and a card for a device you don't have simply stays invisible.
+
+![Dashboard with the soil-moisture and irrigation-control cards](screenshot1.png)
 
 ## What's included
 
@@ -18,35 +27,15 @@ The **cards** auto-discover compatible devices from a single entity via suffix c
 
 ## Installation (HACS)
 
-1. Open HACS in Home Assistant.
-2. Three-dot menu → **Custom repositories** → add this repository URL, category **Integration**.
-3. **Immediately** search "Tuya Irrigation" in HACS → open it → **Download** the latest version. Do not restart Home Assistant before this step — see note below.
-4. **Restart Home Assistant**.
-5. Settings → Devices & Services → **Add Integration** → search "Tuya Irrigation" → Submit (no inputs required).
-6. The card bundle is served automatically by the integration and auto-registered as a Lovelace resource (only in *storage* mode, the default). Hard-refresh your browser (Ctrl+Shift+R). You'll see `Registered Lovelace resource: /tuya_irrigation/tuya-cards.js?v=2.5.1` in the HA logs on first boot — if not (e.g. dashboard in YAML mode), add that URL manually under Settings → Dashboards → Resources (type: module).
+1. HACS → three-dot menu → **Custom repositories** → add this repo URL, category **Integration**.
+2. **Immediately** search "Tuya Irrigation" in HACS → open it → **Download**. *(Do not restart before downloading — see note below.)*
+3. **Restart Home Assistant.**
+4. Settings → Devices & Services → **Add Integration** → "Tuya Irrigation" → Submit (no inputs).
+5. The card bundle is served and auto-registered as a Lovelace resource automatically (in *storage* mode, the default). Hard-refresh the browser (Ctrl+Shift+R). If your dashboard is in YAML mode, add the resource manually under Settings → Dashboards → Resources: url `/tuya_irrigation/tuya-cards.js`, type **module**.
 
-> ⚠️ **Do not restart between steps 2 and 3.** HACS 2.x removes custom repositories that are registered but not yet downloaded during every startup (it logs `Unregister stale custom repository`). If you add the repo and restart before downloading, the repo disappears from the custom list and you have to add it again. Click **Download** first — from then on the repo persists across restarts.
+> ⚠️ **Do not restart between steps 1 and 2.** HACS 2.x removes custom repositories that are registered but not yet downloaded at every startup. Click **Download** first — from then on the repo persists across restarts.
 
-### Upgrading from v1.x
-
-v1.x was distributed as a pure dashboard (Lovelace-only) HACS repo. v2.0.0 is now an integration.
-
-1. Remove the old Lovelace resource pointing to `/hacsfiles/tuya-cards-for-ha/tuya-cards.js` or `/local/tuya-cards.js`.
-2. HACS → remove the old installation.
-3. Re-add this repo as **Integration** and install (see above).
-4. After HA restart, the new resource `/tuya_irrigation/tuya-cards.js?v=2.5.1` will be registered automatically.
-5. Existing `custom:irrigation-control-card` YAML keeps working. The cycles/interval UI is hidden for now (planned re-enablement once the integration supports scheduling).
-
-### Manual install (no HACS)
-
-1. Copy the `custom_components/tuya_irrigation/` directory into `/config/custom_components/`.
-2. Restart HA.
-3. Settings → Devices & Services → **Add Integration** → "Tuya Irrigation" → Submit.
-4. If Lovelace is in YAML mode (no auto-registration), manually add to your `resources:`:
-   ```yaml
-   - url: /tuya_irrigation/tuya-cards.js
-     type: module
-   ```
+**Manual install (no HACS):** copy `custom_components/tuya_irrigation/` into `/config/custom_components/`, restart HA, then do steps 4–5 above.
 
 ---
 
@@ -54,35 +43,30 @@ v1.x was distributed as a pure dashboard (Lovelace-only) HACS repo. v2.0.0 is no
 
 ### `tuya_irrigation.irrigation_by_seconds`
 
-Opens the valve, waits N seconds server-side, closes the valve. The timer runs inside Home Assistant, so it works regardless of the valve firmware's native auto-off behaviour — even with browser closed, for nightly automations.
+Opens the valve, waits N seconds **server-side**, closes it — independent of the valve firmware's (buggy) native auto-off, so it works with the browser closed and from automations.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `switch_entity` | entity_id (switch) | yes | Valve switch to control |
 | `seconds` | int [1, 43200] | yes | How long to keep the valve open |
 
-Example (automation):
 ```yaml
-- alias: "Irrigazione notturna"
-  trigger: { platform: time, at: "22:00:00" }
-  action:
-    - service: tuya_irrigation.irrigation_by_seconds
-      data:
-        switch_entity: switch.tze200_a7sghmms_ts0601
-        seconds: 600   # 10 minutes
+- service: tuya_irrigation.irrigation_by_seconds
+  data:
+    switch_entity: switch.tze200_a7sghmms_ts0601
+    seconds: 600   # 10 minutes
 ```
 
 ### `tuya_irrigation.irrigation_by_liters`
 
-Opens the valve, watches `sensor.<prefix>_summation_delivered`, closes when the target volume has been delivered (plus a safety timeout).
+Opens the valve, watches `sensor.<prefix>_summation_delivered`, closes when the target volume is delivered (or the safety timeout fires).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `switch_entity` | entity_id (switch) | yes | Valve switch to control |
 | `liters` | number [0.001, 10000] | yes | Target volume to deliver |
-| `timeout_seconds` | int [60, 86400] | no (default 3600) | Force-close after this many seconds if volume never reached |
+| `timeout_seconds` | int [60, 86400] | no (default 3600) | Force-close if volume never reached |
 
-Example:
 ```yaml
 - service: tuya_irrigation.irrigation_by_liters
   data:
@@ -93,84 +77,62 @@ Example:
 
 ### Behavior notes
 
-- Calling a service on a switch that is already being irrigated **cancels** the previous task and starts a new one.
-- When a task is cancelled (or HA shuts down), its `finally` block still calls `switch.turn_off` — the valve will not be left open.
-- During a run, pressing the stop button on the card or calling `switch.turn_off` directly aborts the task and closes the valve cleanly.
-- At the start of each run the integration also writes the device's irrigation **mode** (`Duration` / `Capacity`) and **target** (seconds or liters) — best-effort, display-only. The valve echoes them back and computes `irrigation_end_time = start + target`, which the card reads to render its device-truth progress bar (also for automation-started runs). The server-side task still owns closing the valve; these writes never block irrigation if they fail. *(On a GiEX QT06 with a synced clock the device may now also auto-close at the target — harmless, since our `turn_off` fires at the same moment.)*
+- Calling a service on a switch that's already irrigating **cancels** the previous run and starts the new one.
+- On cancel, stop button, or `switch.turn_off`, the run's `finally` still closes the valve — it is never left open.
+- At the start of each run the integration writes the device's **mode** (`Duration`/`Capacity`) and **target** (seconds/liters), best-effort and display-only. The valve echoes them back and computes `irrigation_end_time = start + target`, which the card reads for its device-truth progress bar (also for automation-started runs). These writes never block irrigation; the server-side task still owns closing the valve.
+- **Restarts/shutdowns close every open valve** — see [Shutdown safety](#shutdown-safety) below.
 
 ### Shutdown safety
 
-As long as HA shuts down gracefully (systemd stop, `ha core stop`, OS poweroff with supervisor, or a UPS-triggered shutdown that reaches HA), the integration guarantees every valve it has ever opened during the session is closed before the process exits:
+On any **graceful** HA shutdown (restart, `ha core stop`, host reboot, UPS-triggered poweroff), the integration closes every valve it opened during the session before the process exits:
 
-1. **Pass 1** — all running irrigation timer tasks are cancelled, so their own `finally: turn_off` can run.
-2. **Pass 2** — an explicit sweep iterates every switch the integration has driven in this session; any that HA still reports as `on` gets a direct `switch.turn_off` call. This covers the rare case where pass 1 got cut short or a previous turn-off silently failed.
+1. **Pass 1** — cancel all running timer tasks, so each task's own `finally: turn_off` runs.
+2. **Pass 2** — explicitly `switch.turn_off` any managed switch HA still reports as `on` (covers a pass-1 that got cut short or a turn-off that silently failed).
 
-You'll see one `Shutdown safety: closing open irrigation valve <entity>` WARNING per valve in the HA log when this kicks in. No configuration needed.
+You'll see one `Shutdown safety: closing open irrigation valve <entity>` WARNING per valve in the log. No configuration needed.
 
-This does **not** cover a hard power loss (kernel panic, pulled plug with no UPS) where HA has no chance to run any cleanup. For that, the UPS + OS graceful shutdown is what saves you — the integration simply rides the OS signal.
+> A mid-irrigation restart does **not** resume: the run is lost and water stops. This is the safe default — leaving a valve open across a restart with nothing watching the timer would be far worse. Plan long runs around maintenance windows, or trigger them from automations you can simply re-run. This does **not** cover a hard power loss (kernel panic, pulled plug with no UPS) where HA can't run any cleanup; a UPS + OS graceful shutdown is what saves you there.
 
 ---
 
 ## Device actions (automation builder)
 
-When you build an automation by **selecting a device first**, any device the
-integration recognizes as an irrigation valve gains two extra actions:
+When you build an automation by **selecting a device first**, any recognized irrigation valve gains two extra actions:
 
 | Action | Field | Calls |
 | --- | --- | --- |
-| **Irriga per litri** / *Irrigate by liters* | Liters | `tuya_irrigation.irrigation_by_liters` (safety timeout fixed at 3600 s) |
-| **Irriga per tempo** / *Irrigate for a duration* | Duration (hh:mm:ss) | `tuya_irrigation.irrigation_by_seconds` |
+| **Irriga per litri** / *Irrigate by liters* | Liters | `irrigation_by_liters` (timeout fixed at 3600 s) |
+| **Irriga per tempo** / *Irrigate for a duration* | Duration (hh:mm:ss) | `irrigation_by_seconds` |
 
-**Valve auto-detection:** a device is treated as an irrigation valve when it has
-both a `switch.*` entity and a `sensor.*` entity whose `device_class` is `volume`
-or `water`. Energy-metering sockets (`device_class=energy`) are ignored, so the
-actions only appear on real flow-metering valves — no configuration needed.
-
-Each detected valve also gets an **"Irrigazione in corso" / "Irrigating"**
-`binary_sensor` attached to its device, which is `on` while a server-side
-irrigation timer is running. This is the association that lets the device actions
-appear, and it gives live feedback during irrigation.
+**Valve auto-detection:** a device qualifies when it has both a `switch.*` entity and a `sensor.*` entity with `device_class` `volume` or `water` (energy-metering sockets are ignored). Each detected valve also gets an **"Irrigazione in corso" / "Irrigating"** `binary_sensor`, `on` while a server-side run is active — this association is what surfaces the device actions and gives live feedback.
 
 ---
 
 ## Bundled ZHA quirks
 
-The integration ships a few custom ZHA quirks under `custom_components/tuya_irrigation/quirks/`. They are imported as a side-effect when the integration loads, so they register with zigpy's global device registry exactly as if they had been dropped into `zha.custom_quirks_path`. **No `configuration.yaml` change and no manual file copy needed** — installing or updating the integration via HACS is enough.
+The integration ships custom ZHA quirks under `custom_components/tuya_irrigation/quirks/`, imported as a side-effect on load — they register with zigpy's global registry exactly as if dropped into `zha.custom_quirks_path`. **No `configuration.yaml` change and no manual copy needed** — installing/updating via HACS is enough.
 
-| File | Devices targeted | What it fixes |
+| File | Devices | What it fixes |
 |---|---|---|
-| `giex_qt06_epoch2000.py` | `_TZE200_a7sghmms` / `_TZE204_a7sghmms` / `_TZE200_7ytb3h8u` / `_TZE204_7ytb3h8u` / `_TZE284_7ytb3h8u` (TS0601 GiEX QT06 family) | Answers the device's `commandMcuSyncTime` with a 2000-01-01 epoch (Tuya epoch) instead of the upstream 1970 default. Without this, the firmware ignores the response and re-fires `MCU_SYNC` aggressively, draining the battery in days and producing flapping `irrigation_end_time` values. Also patches the upstream `giex_string_to_dt` converter so `irrigation_start_time` / `irrigation_end_time` use Home Assistant's local timezone (upstream hardcodes +04:00) and tolerate the value restored at startup. The integration also syncs the device clock (Tuya 0x24) at the start of each irrigation, since the GiEX RTC drifts and never requests a sync — an experimental fix for its wrong internal start/end-time stamps. |
-| `hobeian_zg303z.py` | `HOBEIAN ZG-303Z` (Excellux 3-in-1 soil sensor) | Maps Tuya DP 5 → temperature and DP 109 → soil moisture; routes the device's other periodically-emitted DPs (3, 9, 15, 102, 104, 105, 110, 111, 112) to a no-op handler so ZHA stops replying with `UNSUPPORTED_ATTRIBUTE` (which the sleepy device fails to retrieve in time, triggering a cascade of `MAC_INDIRECT_TIMEOUT` errors). |
-| `tuya_ts0001_fdxihpp7.py` | `_TZ3000_fdxihpp7` / `_TZ3000_mkhkxx1p` (TS0001 single-channel switch with external rocker) | Exposes the Tuya `external_switch_type` attribute as an HA `select` (Toggle / State / Momentary). |
+| `giex_qt06_epoch2000.py` | `_TZE200_a7sghmms` / `_TZE204_a7sghmms` / `_TZE200_7ytb3h8u` / `_TZE204_7ytb3h8u` / `_TZE284_7ytb3h8u` (TS0601 GiEX QT06) | Answers `commandMcuSyncTime` with the 2000-01-01 Tuya epoch (not the upstream 1970), so the firmware stops re-firing `MCU_SYNC` aggressively (which drained the battery in days and made `irrigation_end_time` flap). Also patches `giex_string_to_dt` so start/end times use HA's local timezone (upstream hardcodes +04:00) and tolerate the startup-restored value. The integration additionally syncs the device clock (Tuya 0x24) at each run start. |
+| `hobeian_zg303z.py` | `HOBEIAN ZG-303Z` (Excellux 3-in-1 soil sensor) | Maps DP 5 → temperature, DP 109 → soil moisture; routes the other periodic DPs (3, 9, 15, 102, 104, 105, 110, 111, 112) to a no-op so ZHA stops replying `UNSUPPORTED_ATTRIBUTE` (which the sleepy device fails to retrieve in time, cascading into `MAC_INDIRECT_TIMEOUT`). |
+| `tuya_ts0001_fdxihpp7.py` | `_TZ3000_fdxihpp7` / `_TZ3000_mkhkxx1p` (TS0001 switch with external rocker) | Exposes the Tuya `external_switch_type` attribute as an HA `select` (Toggle / State / Momentary). |
 
-If you previously deployed any of these manually under `/config/custom_zha_quirks/`, **delete the manual copy** after upgrading: ZHA registers the last-loaded quirk for a given `(manufacturer, model)`, so the manual file would shadow the bundled one and you would have to keep both in sync.
-
-After upgrading, paired devices may need a one-off **Reconfigure** (Settings → Devices & Services → device → ⋮ → Reconfigure) to pick up the new quirk class — same caveat as the manual `custom_quirks_path` workflow.
+If you previously deployed any of these manually under `/config/custom_zha_quirks/`, **delete the manual copy** after upgrading (ZHA keeps the last-loaded quirk for a `(manufacturer, model)`, so the manual file would shadow the bundled one). Paired devices may need a one-off **Reconfigure** (device → ⋮ → Reconfigure) to pick up the new quirk class.
 
 ---
 
 ## Irrigation Control Card
 
-Compact card for Tuya smart irrigation valves. Replaces a handful of scattered entities with a single widget that drives the integration's services.
+Compact card for the GiEX valve — replaces a handful of scattered entities with one widget that drives the integration's services.
 
-### Features
+- **Dual-mode manual irrigation**: by liters or by seconds, dispatched server-side.
+- **Device-truth progress bar**: derived from the device's own telemetry, not a client timer. Tempo uses `irrigation_end_time − irrigation_start_time`; Liters uses `summation_delivered / target`. Survives a browser refresh, stays in sync across tabs, never drifts, and shows progress even for automation-started runs.
+- **History**: last volume + duration + relative timestamp, collapsible start/end times.
+- **Auto-discovery** from a single switch entity; **visual editor** lists only switches with all companion entities.
+- **Battery indicator**, **integration-missing banner**, **theme-aware** (HA CSS variables).
 
-- **Dual-mode manual irrigation**: by liters or by seconds — both dispatched server-side via the integration.
-- **Device-truth progress bar**: the running countdown (Tempo) and the volume bar (Liters) are derived from the device's own telemetry, not a client-side timer. The Tempo bar uses `irrigation_end_time − irrigation_start_time` (the valve sets `end_time = start + target` immediately on a duration run); the Liters bar uses `summation_delivered / target`. This survives a browser refresh, stays in sync across tabs, never drifts, and shows progress even for runs started by an **automation** rather than the card.
-- **History**: last irrigation volume + duration + relative timestamp, collapsible start/end times.
-- **Auto-discovery**: from a single switch entity, builds all companion entity IDs via suffix convention.
-- **Visual editor**: dropdown shows only switches with all required companion entities.
-- **Battery indicator**: shown if battery entity exists.
-- **Integration-missing banner**: the card warns if the `tuya_irrigation` integration is not installed.
-- **Theme-aware**: uses HA CSS variables for automatic light/dark support.
-
-The cycles/interval scheduling UI is temporarily hidden in v2.0; the code and entity discovery are preserved and will be re-enabled once the integration gains a scheduling service.
-
-### Compatibility
-
-Tested on **Tuya TS0601** (`_TZE200_a7sghmms`, GiEX QT06) smart irrigation valve. Works with any Tuya irrigation valve exposing the same entity suffix pattern, regardless of Zigbee coordinator (ZHA, Zigbee2MQTT, deCONZ).
-
-### Configuration
+The cycles/interval scheduling UI is hidden for now; the code is preserved and will return once the integration gains a scheduling service.
 
 ```yaml
 type: custom:irrigation-control-card
@@ -178,16 +140,14 @@ switch: switch.tze200_a7sghmms_ts0601
 name: Irrigatore 31  # optional, defaults to friendly_name
 ```
 
-### Entity suffix mapping
-
-Given a switch entity `switch.<PREFIX>`, the card auto-discovers:
+**Entity suffix mapping** (given `switch.<PREFIX>`):
 
 | Key | Domain | Suffix | Required |
 |-----|--------|--------|----------|
 | mode | select | `_irrigation_mode` | Yes |
 | target | number | `_irrigation_target` | Yes |
-| cycles | number | `_irrigation_cycles` | Yes (discovered but UI hidden) |
-| interval | number | `_irrigation_interval` | Yes (discovered but UI hidden) |
+| cycles | number | `_irrigation_cycles` | Yes (UI hidden) |
+| interval | number | `_irrigation_interval` | Yes (UI hidden) |
 | last_duration | sensor | `_last_irrigation_duration` | Yes |
 | summation | sensor | `_summation_delivered` | Yes |
 | battery | sensor | `_battery` | No |
@@ -198,22 +158,10 @@ Given a switch entity `switch.<PREFIX>`, the card auto-discovers:
 
 ## Soil Moisture Card
 
-Compact card for soil moisture, temperature and air humidity sensors. Displays all three readings in a balanced three-column layout with a colored progress bar for soil moisture.
+Compact card for the HOBEIAN sensor — soil moisture, temperature and air humidity in a three-column layout, with a colored progress bar for soil moisture.
 
-### Features
-
-- **Three-column layout**: soil moisture, temperature, air humidity at a glance.
-- **Colored progress bar**: soil moisture changes color based on configurable thresholds.
 - **Configurable thresholds**: optimal (green) and acceptable (yellow) ranges per plant; outside acceptable = red.
-- **Auto-discovery**: from a single `_soil_moisture` sensor, builds all companion entities.
-- **Visual editor** with threshold configuration.
-- **Battery indicator** (if available).
-
-### Compatibility
-
-Tested on **HOBEIAN ZG-303Z** (Excellux 3-in-1) soil moisture sensor, paired via ZHA.
-
-### Configuration
+- **Auto-discovery** from a single `_soil_moisture` sensor; **visual editor** with threshold config; **battery indicator**.
 
 ```yaml
 type: custom:soil-moisture-card
@@ -225,7 +173,7 @@ acc_min: 20
 acc_max: 80
 ```
 
-### Threshold color logic
+**Threshold color logic:**
 
 ```
   RED    |  YELLOW  |  GREEN  |  YELLOW  |  RED
@@ -233,7 +181,7 @@ acc_max: 80
   0%   acc_min   opt_min   opt_max   acc_max   100%
 ```
 
-### Entity suffix mapping
+**Entity suffix mapping:**
 
 | Key | Domain | Suffix | Required |
 |-----|--------|--------|----------|
@@ -246,37 +194,17 @@ acc_max: 80
 
 ## Technical details
 
-- **Integration**: pure-Python `custom_components/tuya_irrigation/`, no external dependencies. Uses `async_register_static_paths` + `StaticPathConfig` (compatible with HA ≥ 2024.1).
-- **Cards**: pure `HTMLElement` with Shadow DOM (no LitElement dependency). Bundle concatenated by `bash build.sh`.
-- **Theming**: HA CSS variables (`--primary-text-color`, `--card-background-color`, etc.).
-- **Localization**: IT / EN / ZH via `localStorage.selectedLanguage`.
-
-## Development
+- **Integration**: pure-Python `custom_components/tuya_irrigation/`, no external dependencies. Uses `async_register_static_paths` + `StaticPathConfig` (HA ≥ 2024.1).
+- **Cards**: pure `HTMLElement` with Shadow DOM (no LitElement). Bundle concatenated by `bash build.sh`.
+- **Theming**: HA CSS variables. **Localization**: IT / EN / ZH via `localStorage.selectedLanguage`.
 
 ```bash
-# Rebuild the card bundle (concatenates src/*.js and copies into the integration's www/)
+# Rebuild the card bundle (concatenates src/*.js → tuya-cards.js, copies into the integration's www/)
 bash build.sh
-
-# The integration reloads are HA-side: restart HA or call the "Reload" action
-# on the integration from Developer Tools → YAML configuration.
+# Integration changes are HA-side: restart HA or reload the integration.
 ```
 
 Plan doc for the v2.0 architecture: [`docs/PLAN-integration-v2.md`](docs/PLAN-integration-v2.md).
-
----
-
-## ⚠️ Heads-up: restarts and shutdowns close open valves
-
-This is intentional and you should be aware of it before restarting Home Assistant during an irrigation run.
-
-**Any graceful shutdown of HA closes every valve this integration has opened** — whether you triggered it yourself (Settings → System → Restart, or `ha core restart`), or the OS triggered it (UPS low-battery poweroff, host reboot, HAOS update). A mid-irrigation restart does **not** resume when HA comes back: the session is lost and water stops. This is the safe default — the alternative (leaving a valve open across a restart with nothing watching the timer) would be much worse for an irrigation system on a smart home that might not come back online for minutes.
-
-Concretely, if you restart HA with, say, 20 minutes left on a 30-minute irrigation:
-
-- ✅ The valve closes cleanly as HA shuts down (you'll see `Shutdown safety: closing open irrigation valve …` in the log).
-- ❌ After HA restarts, irrigation does **not** auto-resume. The remaining 20 minutes are not delivered. You'll need to start a new run.
-
-Plan long irrigations around known maintenance windows, or run them via automations that you can simply re-trigger after a restart. See the technical details of the two-pass close sweep under [Behavior notes → Shutdown safety](#shutdown-safety).
 
 ## License
 

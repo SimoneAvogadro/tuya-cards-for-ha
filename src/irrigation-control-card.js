@@ -290,14 +290,17 @@ class IrrigationControlCard extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._hass = null; this._config = null; this._entities = null;
-    this._mode = null; this._timerState = "idle";
-    this._remainingSec = 0; this._totalSec = 0; this._timerInterval = null;
-    this._weStarted = false;
+    this._mode = null;
+    // Render tick: while the valve is open we re-render once a second so the
+    // device-derived countdown/progress bar advances. The displayed values come
+    // from device truth (start_time/end_time/summation_delivered), not from this
+    // timer, so the bar never drifts and self-corrects on every hass update.
+    this._tick = null; this._startPressedAt = 0;
     // "Starting…" overlay state: shown between pressing play and the switch
     // actually turning on (the integration delays the open ~1.5s for clock sync).
     this._starting = false; this._startKind = null; this._startTotalSec = 0;
     this._failed = false; this._startTimer = null;
-    this._inputLitri = 0; this._inputMin = 0; this._inputSec = 0;
+    this._inputLitri = 1; this._inputMin = 0; this._inputSec = 0;
     this._userEditedLitri = false; this._userEditedTempo = false;
     this._histExpanded = false;
     this._domCreated = false;
@@ -332,33 +335,36 @@ class IrrigationControlCard extends HTMLElement {
     const old = this._hass; this._hass = hass;
     const wasOn = old?.states[this._entities.switch]?.state === "on";
     const isOn = hass?.states[this._entities.switch]?.state === "on";
-    if (!wasOn && isOn && this._starting) {
-      // Our start succeeded: drop the overlay. For Tempo, begin the visual
-      // (client-side) countdown now that the valve is actually open.
-      this._clearStarting();
-      if (this._startKind === "tempo" && this._startTotalSec > 0) {
-        this._totalSec = this._startTotalSec; this._remainingSec = this._startTotalSec;
-        this._weStarted = true; this._timerState = "running"; this._startCountdown();
-      }
+    const firstLoad = old === null;
+    if (isOn) {
+      // Valve is open (by us, by an automation, or already running on (re)load).
+      // The switch is the single source of truth. Reflect the device's run mode
+      // in the open panel only on the rising edge / first load, so the user can
+      // still close a panel mid-run without it snapping back.
+      if (!wasOn || firstLoad) this._reflectRunMode();
+      this._startTick();
+      this._maybeClearStarting();
+    } else {
+      if (wasOn) { this._clearStarting(); this._userEditedTempo = false; this._startPressedAt = 0; }
+      this._stopTick();
+      // Only sync inputs from the device when idle and not mid-start, so a
+      // transient unknown/stale value can't disturb the inputs.
+      if (!this._starting) this._syncFromEntities();
     }
-    if (wasOn && !isOn) {
-      // Valve closed (timer expired server-side, stop pressed, or shutdown sweep)
-      // → back to idle. Also clears any lingering "starting" overlay.
-      this._clearStarting();
-      if (this._timerState === "running") {
-        this._stopCountdown(); this._timerState = "idle"; this._weStarted = false; this._userEditedTempo = false;
-      }
-    }
-    // Only sync inputs from entities when truly idle (not while starting/running),
-    // so a transient `unknown` target can't zero the timer mid-start.
-    if (this._timerState === "idle" && !this._starting) this._syncFromEntities();
     this._render();
   }
 
   _syncFromEntities() {
+    // The device target holds seconds in Duration mode and liters in Capacity
+    // mode (the integration writes it at run start). Fill each input only from
+    // the matching mode, so a tempo target can't land in the liters box or
+    // vice-versa.
+    const modeRaw = this._sv(this._entities.mode);
     const t = this._nv(this._entities.target);
-    if (!this._userEditedLitri) this._inputLitri = t > 0 ? t : 1;
-    if (!this._userEditedTempo) { this._inputMin = Math.floor(t / 60); this._inputSec = Math.round(t % 60); }
+    if (modeRaw === "Capacity" && !this._userEditedLitri && t > 0) this._inputLitri = t;
+    if (modeRaw === "Duration" && !this._userEditedTempo && t > 0) {
+      this._inputMin = Math.floor(t / 60); this._inputSec = Math.round(t % 60);
+    }
   }
 
   getCardSize() { return 5; }
@@ -425,6 +431,7 @@ class IrrigationControlCard extends HTMLElement {
   // `set hass`) clears it, a timeout marks it failed.
   _beginStarting(kind, totalSec) {
     this._starting = true; this._startKind = kind; this._startTotalSec = totalSec;
+    this._startPressedAt = Date.now();
     this._failed = false;
     if (this._startTimer) clearTimeout(this._startTimer);
     this._startTimer = setTimeout(() => this._startTimedOut(), 10000);
@@ -498,21 +505,72 @@ class IrrigationControlCard extends HTMLElement {
     });
   }
 
-  _startCountdown() {
-    this._stopCountdown();
-    this._timerInterval = setInterval(() => {
-      this._remainingSec--;
-      if (this._remainingSec <= 0) { this._remainingSec = 0; this._resetTimer(); return; }
-      this._tickUI();
-    }, 1000);
+  // ── Render tick (device-truth progress) ──
+  // While the valve is open we re-render every second so the countdown digits and
+  // progress bar advance. The values are derived from the device's start_time /
+  // end_time / summation_delivered on each render, so they survive a browser
+  // refresh, reflect automation-started runs, and never drift.
+  _startTick() { if (this._tick) return; this._tick = setInterval(() => this._render(), 1000); }
+  _stopTick() { if (this._tick) { clearInterval(this._tick); this._tick = null; } }
+
+  // Which kind of run is active, from the device's irrigation mode (written by
+  // the integration at run start). Falls back to our own _startKind during the
+  // brief open delay before the device echoes the mode back.
+  _runKind() {
+    const m = this._sv(this._entities.mode);
+    if (m === "Capacity") return "litri";
+    if (m === "Duration") return "tempo";
+    return this._startKind || null;
   }
-  _stopCountdown() { if (this._timerInterval) { clearInterval(this._timerInterval); this._timerInterval = null; } }
-  _resetTimer() { this._stopCountdown(); this._timerState = "idle"; this._weStarted = false; this._userEditedTempo = false; this._render(); }
-  _tickUI() {
-    const mm = Math.floor(this._remainingSec / 60), ss = this._remainingSec % 60;
-    this._setInput(this._el.tMin, this._p2(mm));
-    this._setInput(this._el.tSec, this._p2(ss));
-    if (this._el.bar) this._el.bar.style.width = (this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0) + "%";
+  _reflectRunMode() {
+    if (this._mode !== null) return;   // don't yank a panel the user opened
+    const kind = this._runKind();
+    if (kind) this._mode = kind;
+  }
+  _maybeClearStarting() {
+    if (!this._starting) return;
+    const kind = this._runKind();
+    if (kind === "litri") { this._clearStarting(); return; }
+    if (kind === "tempo" && this._tempoProgress()) { this._clearStarting(); return; }
+    // else: device hasn't reported the run yet — keep the overlay; the 10s
+    // watchdog set in _beginStarting still fires if it never does.
+  }
+  // Tempo progress from the device clock. The valve sets end_time = start + target
+  // immediately on a duration run, so we use end_time - start_time as the total
+  // (falling back to the target seconds, then to our requested duration). Guards
+  // against a stale start_time during the ~1.5s open delay by using our own press
+  // time until the device reports a fresh one.
+  _tempoProgress() {
+    let start = this._tsDate(this._entities.start_time);
+    if (this._startPressedAt && (!start || start.getTime() < this._startPressedAt - 5000)) {
+      start = new Date(this._startPressedAt);
+    }
+    if (!start) return null;
+    let total;
+    const end = this._tsDate(this._entities.end_time);
+    if (end && end.getTime() > start.getTime()) total = Math.round((end.getTime() - start.getTime()) / 1000);
+    else { const tgt = this._nv(this._entities.target); total = tgt > 0 ? tgt : this._startTotalSec; }
+    if (!total || total <= 0) return null;
+    const remaining = Math.max(0, total - Math.floor((Date.now() - start.getTime()) / 1000));
+    return { remaining, total, pct: Math.max(0, Math.min(100, Math.round((remaining / total) * 100))) };
+  }
+  // Liters progress from the live summation_delivered vs the target (liters).
+  _litriProgress() {
+    let target = this._nv(this._entities.target);
+    if (target <= 0) target = this._inputLitri;
+    if (target <= 0) return null;
+    const delivered = Math.max(0, this._nv(this._entities.summation));
+    return { delivered, target, pct: Math.max(0, Math.min(100, Math.round((delivered / target) * 100))) };
+  }
+  // Unified running view used by both the initial DOM and the selective update.
+  _runView() {
+    const isOn = this._isOn();
+    const kind = isOn ? this._runKind() : null;
+    return {
+      isOn, kind,
+      tp: kind === "tempo" ? this._tempoProgress() : null,
+      lp: kind === "litri" ? this._litriProgress() : null,
+    };
   }
 
   async _toggleSchedule() { const c = this._nv(this._entities.cycles); await this._svc("number", "set_value", { entity_id: this._entities.cycles, value: c <= 1 ? 2 : 0 }); }
@@ -612,8 +670,10 @@ class IrrigationControlCard extends HTMLElement {
     const etLocal = this._fmtLocalTime(this._sv(e.end_time));
     const hasStEt = !!(stLocal && etLocal);
 
+    const { tp, lp } = this._runView();
+    const tempoActive = !!tp, litriActive = !!lp;
     let tM, tS;
-    if (this._timerState !== "idle") { tM = Math.floor(this._remainingSec / 60); tS = this._remainingSec % 60; }
+    if (tp) { tM = Math.floor(tp.remaining / 60); tS = tp.remaining % 60; }
     else { tM = this._inputMin; tS = this._inputSec; }
 
     const t = (k) => _t(this._hass, k);
@@ -623,7 +683,9 @@ class IrrigationControlCard extends HTMLElement {
     else if (isOn) { bTxt = t("irrigating"); bCls = "badge active"; }
     else { bTxt = t("off"); bCls = "badge off"; }
 
-    const pP = this._timerState !== "idle" && this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0;
+    const pP = tp ? tp.pct : 0;
+    const lpP = lp ? lp.pct : 0;
+    const litriLabel = lp ? `${this._fmtVolShortNum(lp.delivered)} / ${this._fmtVolShortNum(lp.target)} L` : "";
     const modeOpen = this._mode !== null;
     const PL = `<svg width="18" height="18" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="white"/></svg>`;
     const PA = `<svg width="16" height="16" viewBox="0 0 24 24" fill="white"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>`;
@@ -751,18 +813,20 @@ input[type=number]{-moz-appearance:textfield}
           <div class="nw"><input type="number" inputmode="numeric" pattern="[0-9]*" class="ni" id="vl" value="${Math.round(this._inputLitri)}" min="1" max="999"><div class="ut">L</div></div>
           <button class="gb ${isOn&&this._mode==="litri"?"rn":""}" id="gl">${isOn&&this._mode==="litri"?PA:PL}</button>
         </div>
+        <div class="fh" id="litri-fh" style="display:${litriActive?"block":"none"}">${litriLabel}</div>
+        <div class="pw ${litriActive?"vi":""}" id="litri-pw"><div class="pb" id="litri-bar" style="width:${lpP}%"></div></div>
       </div></div>
       <div class="ip ${this._mode==="tempo"?"vi":""}" id="ip-tempo"><div>
         <div class="ir">
-          <div class="tg ${this._timerState==="running"?"cd":""}">
-            <input type="number" inputmode="numeric" pattern="[0-9]*" class="ti ${this._timerState!=="idle"?"ct":""}" id="t-min" value="${this._p2(tM)}" min="0" max="59" ${this._timerState!=="idle"?"disabled":""}>
-            <span class="tp ${this._timerState!=="idle"?"ct":""}">:</span>
-            <input type="number" inputmode="numeric" pattern="[0-9]*" class="ti ${this._timerState!=="idle"?"ct":""}" id="t-sec" value="${this._p2(tS)}" min="0" max="59" ${this._timerState!=="idle"?"disabled":""}>
+          <div class="tg ${tempoActive?"cd":""}">
+            <input type="number" inputmode="numeric" pattern="[0-9]*" class="ti ${tempoActive?"ct":""}" id="t-min" value="${this._p2(tM)}" min="0" max="59" ${tempoActive?"disabled":""}>
+            <span class="tp ${tempoActive?"ct":""}">:</span>
+            <input type="number" inputmode="numeric" pattern="[0-9]*" class="ti ${tempoActive?"ct":""}" id="t-sec" value="${this._p2(tS)}" min="0" max="59" ${tempoActive?"disabled":""}>
           </div>
-          <div class="fh">${this._timerState!=="idle"?t("remaining"):"mm : ss"}</div>
+          <div class="fh">${tempoActive?t("remaining"):"mm : ss"}</div>
           <button class="gb ${isOn?"rn":""}" id="gt">${isOn?PA:PL}</button>
         </div>
-        <div class="pw ${this._timerState!=="idle"?"vi":""}"><div class="pb" id="progress-bar" style="width:${pP}%"></div></div>
+        <div class="pw ${tempoActive?"vi":""}"><div class="pb" id="progress-bar" style="width:${pP}%"></div></div>
       </div></div>
       <div class="rp ${modeOpen?"vi":""}"><div>
         <div class="sh">
@@ -818,7 +882,8 @@ input[type=number]{-moz-appearance:textfield}
       ipLitri: $("ip-litri"), ipTempo: $("ip-tempo"),
       vl: $("vl"), gl: $("gl"),
       tg: q(".tg"), tMin: $("t-min"), tSec: $("t-sec"), tp: q(".tp"),
-      fh: q(".fh"), gt: $("gt"), pw: q(".pw"), bar: $("progress-bar"),
+      fh: q("#ip-tempo .fh"), gt: $("gt"), pw: q("#ip-tempo .pw"), bar: $("progress-bar"),
+      litriFh: $("litri-fh"), litriPw: $("litri-pw"), litriBar: $("litri-bar"),
       rp: q(".rp"), sto: $("sto"), schedGrid: $("sched-grid"),
       svDisp: q(".sv"), ivHh: $("iv-hh"), ivMm: $("iv-mm"),
       histCompact: $("hist-compact"), histExpanded: $("hist-expanded"),
@@ -870,8 +935,10 @@ input[type=number]{-moz-appearance:textfield}
     const etLocal = this._fmtLocalTime(this._sv(e.end_time));
     const hasStEt = !!(stLocal && etLocal);
 
+    const { tp, lp } = this._runView();
+    const tempoActive = !!tp, litriActive = !!lp;
     let tM, tS;
-    if (this._timerState !== "idle") { tM = Math.floor(this._remainingSec / 60); tS = this._remainingSec % 60; }
+    if (tp) { tM = Math.floor(tp.remaining / 60); tS = tp.remaining % 60; }
     else { tM = this._inputMin; tS = this._inputSec; }
 
     const t = (k) => _t(this._hass, k);
@@ -911,28 +978,32 @@ input[type=number]{-moz-appearance:textfield}
     const litriRunning = isOn && this._mode === "litri";
     this._cls(el.gl, "rn", litriRunning);
     if (el.gl) el.gl.innerHTML = litriRunning ? PA : PL;
+    this._cls(el.litriPw, "vi", litriActive);
+    if (el.litriBar) el.litriBar.style.width = (lp ? lp.pct : 0) + "%";
+    if (el.litriFh) {
+      el.litriFh.style.display = litriActive ? "block" : "none";
+      if (lp) this._txt(el.litriFh, `${this._fmtVolShortNum(lp.delivered)} / ${this._fmtVolShortNum(lp.target)} L`);
+    }
 
     // ── Tempo ──
     if (!this._isEditingGroup("tempo")) {
       this._setInput(el.tMin, this._p2(tM));
       this._setInput(el.tSec, this._p2(tS));
     }
-    const timerActive = this._timerState !== "idle";
-    this._cls(el.tg, "cd", this._timerState === "running");
-    this._cls(el.tMin, "ct", timerActive);
-    this._cls(el.tSec, "ct", timerActive);
-    this._cls(el.tp, "ct", timerActive);
-    if (timerActive) { el.tMin?.setAttribute("disabled", ""); el.tSec?.setAttribute("disabled", ""); }
+    this._cls(el.tg, "cd", tempoActive);
+    this._cls(el.tMin, "ct", tempoActive);
+    this._cls(el.tSec, "ct", tempoActive);
+    this._cls(el.tp, "ct", tempoActive);
+    if (tempoActive) { el.tMin?.setAttribute("disabled", ""); el.tSec?.setAttribute("disabled", ""); }
     else { el.tMin?.removeAttribute("disabled"); el.tSec?.removeAttribute("disabled"); }
-    if (el.fh) this._txt(el.fh, timerActive ? t("remaining") : "mm : ss");
+    if (el.fh) this._txt(el.fh, tempoActive ? t("remaining") : "mm : ss");
     // Button is switch-driven (single source of truth): on → stop, off → play.
     if (el.gt) {
       this._cls(el.gt, "rn", isOn);
       el.gt.innerHTML = isOn ? PA : PL;
     }
-    this._cls(el.pw, "vi", timerActive);
-    const pP = timerActive && this._totalSec > 0 ? Math.round((this._remainingSec / this._totalSec) * 100) : 0;
-    if (el.bar) el.bar.style.width = pP + "%";
+    this._cls(el.pw, "vi", tempoActive);
+    if (el.bar) el.bar.style.width = (tp ? tp.pct : 0) + "%";
 
     // ── "Starting…" overlay ──
     this._cls(el.startOv, "vi", this._starting);
@@ -979,7 +1050,7 @@ input[type=number]{-moz-appearance:textfield}
     }
   }
 
-  disconnectedCallback() { this._stopCountdown(); }
+  disconnectedCallback() { this._stopTick(); }
 }
 
 customElements.define("irrigation-control-card", IrrigationControlCard);

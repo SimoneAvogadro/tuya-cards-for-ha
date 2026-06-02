@@ -310,6 +310,51 @@ async def _async_push_device_time(hass: HomeAssistant, switch_entity: str) -> No
         _LOGGER.warning("Time push to %s failed (non-fatal): %s", switch_entity, err)
 
 
+async def _async_push_run_plan(
+    hass: HomeAssistant, switch_entity: str, mode: str, target: int
+) -> None:
+    """Best-effort: write the run's MODE + TARGET to the valve before opening it.
+
+    The GiEX QT06 exposes ``select.<prefix>_irrigation_mode`` ("Duration" /
+    "Capacity") and ``number.<prefix>_irrigation_target`` (seconds or liters).
+    Until something writes them they read 'unknown', because we drive the valve
+    via the raw switch and bypass the device's native irrigation UI. Writing
+    them here makes the device echo the values back AND compute
+    ``irrigation_end_time = start + target`` — which the card reads to render an
+    accurate, refresh-proof progress bar (works even for automation-started runs
+    since this runs inside the service).
+
+    The device's own native timer is NOT trusted for closing the valve — the
+    integration's server-side task still closes it. These writes are display-only
+    and fully guarded: any failure is logged and swallowed.
+    """
+    prefix = switch_entity[len("switch.") :]
+    mode_entity = f"select.{prefix}_irrigation_mode"
+    target_entity = f"number.{prefix}_irrigation_target"
+    try:
+        if hass.states.get(mode_entity) is not None:
+            await hass.services.async_call(
+                "select",
+                "select_option",
+                {"entity_id": mode_entity, "option": mode},
+                blocking=True,
+            )
+        if hass.states.get(target_entity) is not None:
+            await hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": target_entity, "value": target},
+                blocking=True,
+            )
+        _LOGGER.info(
+            "Pushed run plan to %s: mode=%s target=%s", switch_entity, mode, target
+        )
+    except Exception as err:  # noqa: BLE001 - best-effort, never block irrigation
+        _LOGGER.warning(
+            "Run-plan push to %s failed (non-fatal): %s", switch_entity, err
+        )
+
+
 def _async_register_services(
     hass: HomeAssistant,
     active_tasks: dict[str, asyncio.Task],
@@ -444,6 +489,10 @@ def _async_register_services(
 
         _cancel_existing(switch_entity)
         managed_switches.add(switch_entity)
+        # Write MODE + TARGET so the device echoes them back and computes
+        # end_time = start + target (the card reads these for the progress bar).
+        # Display-only; our task below still closes the valve. Best-effort.
+        await _async_push_run_plan(hass, switch_entity, "Duration", seconds)
         # Sync the device clock before opening so it stamps start/end time with a
         # correct RTC. Best-effort; runs before we create our task, so a cancelled
         # old task's finally (running during these awaits) still closes the valve
@@ -479,6 +528,10 @@ def _async_register_services(
 
         _cancel_existing(switch_entity)
         managed_switches.add(switch_entity)
+        # Write MODE=Capacity + TARGET (liters) so the device echoes them back for
+        # the card's liters progress bar. Display-only; the summation monitor below
+        # is what actually closes the valve at target. Best-effort.
+        await _async_push_run_plan(hass, switch_entity, "Capacity", int(round(liters)))
         # Sync the device clock before opening (best-effort) — see _handle_seconds.
         await _async_push_device_time(hass, switch_entity)
         await asyncio.sleep(_TIME_SYNC_SETTLE)

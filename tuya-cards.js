@@ -70,6 +70,7 @@ const I18N = {
   it: {
     irrigating: "Irrigando", paused: "In pausa", off: "Spento",
     starting: "Avvio…", startFailed: "Avvio fallito",
+    stopping: "Arresto…", stopFailed: "Arresto fallito",
     dispenseFor: "Eroga per:", liters: "Litri", time: "Tempo", manual: "Manuale",
     remaining: "rimanente",
     repeats: "Ripetizioni", cycles: "Cicli", cycleInterval: "Intervallo cicli",
@@ -94,6 +95,7 @@ const I18N = {
   en: {
     irrigating: "Irrigating", paused: "Paused", off: "Off",
     starting: "Starting…", startFailed: "Start failed",
+    stopping: "Stopping…", stopFailed: "Stop failed",
     dispenseFor: "Dispense for:", liters: "Liters", time: "Time", manual: "Manual",
     remaining: "remaining",
     repeats: "Repeats", cycles: "Cycles", cycleInterval: "Cycle interval",
@@ -118,6 +120,7 @@ const I18N = {
   zh: {
     irrigating: "灌溉中", paused: "已暂停", off: "关闭",
     starting: "启动中…", startFailed: "启动失败",
+    stopping: "停止中…", stopFailed: "停止失败",
     dispenseFor: "灌溉方式：", liters: "升量", time: "时长", manual: "手动",
     remaining: "剩余",
     repeats: "重复", cycles: "循环次数", cycleInterval: "循环间隔",
@@ -320,6 +323,10 @@ class IrrigationControlCard extends HTMLElement {
     // actually turning on (the integration delays the open ~1.5s for clock sync).
     this._starting = false; this._startKind = null; this._startTotalSec = 0;
     this._failed = false; this._startTimer = null;
+    // "Arresto…" overlay state: shown between pressing stop and the switch
+    // actually turning off, so the controls can't be mis-operated (double-tap or
+    // navigate-and-restart) into an inconsistent state during the close delay.
+    this._stopping = false; this._stopFailed = false; this._stopTimer = null;
     this._inputLitri = 1; this._inputMin = 0; this._inputSec = 0;
     this._userEditedLitri = false; this._userEditedTempo = false;
     this._histExpanded = false;
@@ -365,7 +372,7 @@ class IrrigationControlCard extends HTMLElement {
       this._startTick();
       this._maybeClearStarting();
     } else {
-      if (wasOn) { this._clearStarting(); this._userEditedTempo = false; this._startPressedAt = 0; }
+      if (wasOn) { this._clearStarting(); this._clearStopping(); this._userEditedTempo = false; this._startPressedAt = 0; }
       this._stopTick();
       // Only sync inputs from the device when idle and not mid-start, so a
       // transient unknown/stale value can't disturb the inputs.
@@ -471,9 +478,34 @@ class IrrigationControlCard extends HTMLElement {
     this._starting = false; this._failed = false; this._startKind = null;
   }
 
+  // ── "Arresto…" overlay lifecycle ──
+  // Symmetric to the start overlay: covers the controls from pressing stop until
+  // the switch confirms off (handled in `set hass`). The overlay intercepts
+  // clicks, so a double-tap or a tab switch + restart can't race the close.
+  _beginStopping() {
+    this._clearStarting();
+    this._stopping = true; this._stopFailed = false;
+    if (this._stopTimer) clearTimeout(this._stopTimer);
+    this._stopTimer = setTimeout(() => this._stopTimedOut(), 10000);
+    this._render();
+  }
+  _stopTimedOut() {
+    this._stopTimer = null;
+    if (!this._stopping) return;
+    // Switch never turned off within 10s — surface "failed" briefly, then clear.
+    this._stopFailed = true; this._render();
+    setTimeout(() => {
+      this._stopping = false; this._stopFailed = false; this._render();
+    }, 1800);
+  }
+  _clearStopping() {
+    if (this._stopTimer) { clearTimeout(this._stopTimer); this._stopTimer = null; }
+    this._stopping = false; this._stopFailed = false;
+  }
+
   async _startLitri() {
     const v = this._inputLitri; if (v <= 0) return;
-    if (this._isOffline()) return;
+    if (this._isOffline() || this._starting || this._stopping) return;
     if (!this._integrationAvailable()) { console.warn("[irrigation-control-card] tuya_irrigation integration not installed"); return; }
     this._beginStarting("litri", 0);
     await this._svc("tuya_irrigation", "irrigation_by_liters", {
@@ -481,10 +513,13 @@ class IrrigationControlCard extends HTMLElement {
       liters: v,
     });
   }
-  async _stopLitri() { await this._svc("switch", "turn_off", { entity_id: this._entities.switch }); }
+  async _stopLitri() {
+    this._beginStopping();
+    await this._svc("switch", "turn_off", { entity_id: this._entities.switch });
+  }
 
   async _toggleTimer() {
-    if (this._isOffline() || this._starting) return;
+    if (this._isOffline() || this._starting || this._stopping) return;
     // Switch is the source of truth: on → stop, off → start.
     if (this._isOn()) await this._stopTimerIrr();
     else await this._startTimerIrr();
@@ -502,8 +537,10 @@ class IrrigationControlCard extends HTMLElement {
   }
   async _stopTimerIrr() {
     // Stopping an integration-managed run = turn_off, which triggers the
-    // integration's finally block and closes the valve cleanly. The switch
-    // going off (handled in `set hass`) resets the UI to idle.
+    // integration's finally block and closes the valve cleanly. The "Arresto…"
+    // overlay covers the controls until the switch confirms off (handled in
+    // `set hass`), which also resets the UI to idle.
+    this._beginStopping();
     await this._svc("switch", "turn_off", { entity_id: this._entities.switch });
   }
   // One-shot shortcut: opens the Tempo panel, fills it with `_manualSec`,
@@ -511,7 +548,7 @@ class IrrigationControlCard extends HTMLElement {
   // state — once clicked, the user is in Tempo mode and can stop early via
   // the standard Tempo stop button.
   async _startManual() {
-    if (this._isOffline()) return;
+    if (this._isOffline() || this._starting || this._stopping) return;
     if (!this._integrationAvailable()) { console.warn("[irrigation-control-card] tuya_irrigation integration not installed"); return; }
     const tot = this._manualSec;
     this._mode = "tempo";
@@ -858,7 +895,7 @@ input[type=number]{-moz-appearance:textfield}
           <div class="sf"><div class="fl">${t("cycleInterval")}</div><div class="str"><input type="number" inputmode="numeric" pattern="[0-9]*" class="ss" id="iv-hh" value="${this._p2(ivH)}" min="0" max="12"><span class="sep">:</span><input type="number" inputmode="numeric" pattern="[0-9]*" class="ss" id="iv-mm" value="${this._p2(ivM)}" min="0" max="59"></div><div class="sht">hh : mm</div></div>
         </div>
       </div></div>
-      <div class="start-ov ${this._starting?"vi":""} ${this._failed?"failed":""}" id="start-ov"><span id="start-ov-txt">${this._failed?t("startFailed"):t("starting")}</span></div>
+      <div class="start-ov ${(this._starting||this._stopping)?"vi":""} ${(this._failed||this._stopFailed)?"failed":""}" id="start-ov"><span id="start-ov-txt">${this._stopping?(this._stopFailed?t("stopFailed"):t("stopping")):(this._failed?t("startFailed"):t("starting"))}</span></div>
     </div>
     <div class="dv ${modeOpen?"vi":""}" id="divider"></div>
     <div class="sc" style="margin-bottom:0">
@@ -925,7 +962,7 @@ input[type=number]{-moz-appearance:textfield}
     el.bl?.addEventListener("click", () => this._selectMode("litri"));
     el.bt?.addEventListener("click", () => this._selectMode("tempo"));
     el.bm?.addEventListener("click", () => this._startManual());
-    el.gl?.addEventListener("click", () => { if (this._isOn() && this._mode === "litri") this._stopLitri(); else this._startLitri(); });
+    el.gl?.addEventListener("click", () => { if (this._starting || this._stopping) return; if (this._isOn() && this._mode === "litri") this._stopLitri(); else this._startLitri(); });
     el.gt?.addEventListener("click", () => this._toggleTimer());
     el.vl?.addEventListener("change", ev => { this._inputLitri = Math.max(1, Math.min(999, parseInt(ev.target.value) || 1)); this._userEditedLitri = true; });
     el.tMin?.addEventListener("change", ev => { this._inputMin = Math.max(0, Math.min(59, parseInt(ev.target.value) || 0)); this._userEditedTempo = true; });
@@ -1025,10 +1062,14 @@ input[type=number]{-moz-appearance:textfield}
     this._cls(el.pw, "vi", tempoActive);
     if (el.bar) el.bar.style.width = (tp ? tp.pct : 0) + "%";
 
-    // ── "Starting…" overlay ──
-    this._cls(el.startOv, "vi", this._starting);
-    this._cls(el.startOv, "failed", this._failed);
-    if (el.startOvTxt) this._txt(el.startOvTxt, this._failed ? t("startFailed") : t("starting"));
+    // ── "Avvio…" / "Arresto…" overlay ──
+    this._cls(el.startOv, "vi", this._starting || this._stopping);
+    this._cls(el.startOv, "failed", this._failed || this._stopFailed);
+    if (el.startOvTxt) {
+      this._txt(el.startOvTxt, this._stopping
+        ? (this._stopFailed ? t("stopFailed") : t("stopping"))
+        : (this._failed ? t("startFailed") : t("starting")));
+    }
 
     // ── Integration availability banner ──
     this._cls(el.intgMissing, "vi", !this._integrationAvailable());

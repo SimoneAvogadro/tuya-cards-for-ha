@@ -116,7 +116,8 @@ The integration ships custom ZHA quirks under `custom_components/tuya_irrigation
 |---|---|---|
 | `giex_qt06_epoch2000.py` | `_TZE200_a7sghmms` / `_TZE204_a7sghmms` / `_TZE200_7ytb3h8u` / `_TZE204_7ytb3h8u` / `_TZE284_7ytb3h8u` (TS0601 GiEX QT06) | Answers `commandMcuSyncTime` with the 2000-01-01 Tuya epoch (not the upstream 1970), so the firmware stops re-firing `MCU_SYNC` aggressively (which drained the battery in days and made `irrigation_end_time` flap). Also patches `giex_string_to_dt` so start/end times use HA's local timezone (upstream hardcodes +04:00) and tolerate the startup-restored value. The integration additionally syncs the device clock (Tuya 0x24) at each run start. |
 | `hobeian_zg303z.py` | `HOBEIAN ZG-303Z` (Excellux 3-in-1 soil sensor) | Maps DP 5 → temperature, DP 109 → soil moisture; routes the other periodic DPs (3, 9, 15, 102, 104, 105, 110, 111, 112) to a no-op so ZHA stops replying `UNSUPPORTED_ATTRIBUTE` (which the sleepy device fails to retrieve in time, cascading into `MAC_INDIRECT_TIMEOUT`). |
-| `tuya_ts0001_fdxihpp7.py` | `_TZ3000_fdxihpp7` / `_TZ3000_mkhkxx1p` (TS0001 switch with external rocker) | Exposes the Tuya `external_switch_type` attribute as an HA `select` (Toggle / State / Momentary). |
+
+> Non-irrigation Tuya quirks (e.g. the `TS0001` switch `external_switch_type` select) now live in a dedicated repo: [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks).
 
 If you previously deployed any of these manually under `/config/custom_zha_quirks/`, **delete the manual copy** after upgrading (ZHA keeps the last-loaded quirk for a `(manufacturer, model)`, so the manual file would shadow the bundled one). Paired devices may need a one-off **Reconfigure** (device → ⋮ → Reconfigure) to pick up the new quirk class.
 

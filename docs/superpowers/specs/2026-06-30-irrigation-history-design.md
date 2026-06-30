@@ -64,7 +64,7 @@ observer reads when a run was integration-started.
    • subscribes to async_track_state_change_event for every discovered valve switch
    • off→on : open a run (stamp start, snapshot summation baseline, persist in_flight)
    • on→off : finalize run → build record → append to Store (capped) → bump water_total
-              → dispatch history_signal(switch) → fire tuya_irrigation_irrigation_completed
+              → dispatch history_signal(switch) → fire irrigation_completed event
                  │ history_signal(switch)
         ┌────────┴─────────┐
         ▼                  ▼
@@ -192,7 +192,10 @@ transient hand-off; `in_flight` is its durable, restart-surviving copy.)
 
 ## Event
 
-`tuya_irrigation_irrigation_completed` fired by the manager on each finalized run:
+`irrigation_completed` fired by the manager on each finalized run. The name is
+deliberately **un-namespaced** (no `tuya_irrigation_` prefix) so other irrigation
+integrations (e.g. a future Sonoff valve) can fire the same event with the same schema;
+`switch_entity` + `device_id` in the payload disambiguate the source:
 
 ```jsonc
 {
@@ -261,7 +264,7 @@ Run `bash build.sh` after editing the card source.
   HA's water dashboard / LTS.
 - Restart HA mid-run → run still finalized after restart with the real start; history and
   water_total persist across restart.
-- `tuya_irrigation_irrigation_completed` shows in the logbook with the right payload.
+- `irrigation_completed` shows in the logbook with the right payload.
 - Recorder DB not bloated: `runs` attribute excluded from the recorder.
 - Light/dark theme render OK.
 

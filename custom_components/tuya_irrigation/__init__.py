@@ -46,6 +46,7 @@ from .const import (
 # registry. Needs to happen at module load time so ZHA picks them up before
 # enumerating devices.
 from . import quirks  # noqa: F401, E402
+from .history import IrrigationRunLog
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ _LOGGER = logging.getLogger(__name__)
 # 0x24 time command is fire-and-forget (no ack), hence a fixed settle delay.
 _TIME_SYNC_SETTLE = 1.5
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
 SECONDS_SCHEMA = vol.Schema(
     {
@@ -87,8 +88,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # task was killed before its finally ran) still gets closed.
     managed_switches: set[str] = set()
     hass.data.setdefault(DOMAIN, {}).update(
-        {"active_tasks": active_tasks, "managed_switches": managed_switches}
+        {
+            "active_tasks": active_tasks,
+            "managed_switches": managed_switches,
+            # Transient per-switch enrichment the run-log observer folds into a
+            # record (mode/target/source at open; reason/delivered at close).
+            "pending": {},
+        }
     )
+
+    # System of record for irrigation history. Set up (store loaded + valve
+    # subscriptions live) BEFORE the sensor platform, so its entities find a
+    # populated run log the moment they are added.
+    run_log = IrrigationRunLog(hass)
+    await run_log.async_setup()
+    hass.data[DOMAIN]["run_log"] = run_log
 
     await _async_register_frontend(hass)
     _async_register_services(hass, active_tasks, managed_switches)
@@ -112,6 +126,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     active_tasks: dict[str, asyncio.Task] = domain_data.get("active_tasks", {})
     managed_switches: set[str] = domain_data.get("managed_switches", set())
     await _async_close_all_valves(hass, active_tasks, managed_switches)
+    run_log: IrrigationRunLog | None = domain_data.get("run_log")
+    if run_log is not None:
+        await run_log.async_unload()
     hass.services.async_remove(DOMAIN, SERVICE_IRRIGATION_BY_SECONDS)
     hass.services.async_remove(DOMAIN, SERVICE_IRRIGATION_BY_LITERS)
     hass.data.pop(DOMAIN, None)
@@ -381,6 +398,21 @@ def _async_register_services(
             _LOGGER.info("Cancelling running irrigation task on %s", switch_entity)
             existing.cancel()
 
+    def _set_pending(switch_entity: str, **fields) -> None:
+        """Stash run-log enrichment the switch observer folds into the record.
+
+        Best-effort and non-blocking. Only applies while the run is still
+        in-flight: if the valve already closed early (device auto-off / external
+        turn-off) the observer has finalized and popped pending, so a late write
+        here would resurrect a stale entry and mislabel the NEXT run — skip it.
+        ``reason``/``delivered`` set before the valve closes still land normally.
+        """
+        run_log = hass.data.get(DOMAIN, {}).get("run_log")
+        if run_log is not None and not run_log.is_running(switch_entity):
+            return
+        pending = hass.data.get(DOMAIN, {}).setdefault("pending", {})
+        pending.setdefault(switch_entity, {}).update(fields)
+
     async def _async_begin_run(
         switch_entity: str, mode: str, target: int, run_coro
     ) -> None:
@@ -410,6 +442,28 @@ def _async_register_services(
         await asyncio.sleep(_TIME_SYNC_SETTLE)
         task = hass.async_create_task(run_coro)
         active_tasks[switch_entity] = task
+        # Guarantee a clean off->on edge so the observer attaches THIS run to the
+        # _turn_on below. If the valve is already open we are superseding a prior
+        # run whose valve the cancel above didn't close — a *manual* run (physical
+        # button / Tuya app / bare switch.turn_on) with no task, or a valve left on
+        # across a restart. Close it first; otherwise _turn_on is a no-op on an
+        # already-open valve and the new run is never recorded (its pending then
+        # leaks into the next run). Then record any prior run the log still has
+        # open as its own run (with a correct end time), instead of merging it.
+        run_log = hass.data.get(DOMAIN, {}).get("run_log")
+        state = hass.states.get(switch_entity)
+        if state is not None and state.state == "on":
+            await _turn_off(switch_entity)
+        if run_log is not None and run_log.is_running(switch_entity):
+            await run_log.async_force_finalize(switch_entity)
+        # The switch observer reads this when the valve opens, tagging the
+        # recorded run as integration-driven with its requested mode/target. A
+        # fresh dict each run discards any stale reason/delivered from before.
+        hass.data.get(DOMAIN, {}).setdefault("pending", {})[switch_entity] = {
+            "mode": mode,
+            "target": target,
+            "source": "integration",
+        }
         await _turn_on(switch_entity)
 
     async def _run_seconds(switch_entity: str, seconds: int) -> None:
@@ -419,6 +473,7 @@ def _async_register_services(
         _LOGGER.info("Irrigation on %s for %d seconds (started)", switch_entity, seconds)
         try:
             await asyncio.sleep(seconds)
+            _set_pending(switch_entity, reason="completed")
             _LOGGER.info("Timer expired on %s — closing valve", switch_entity)
         except asyncio.CancelledError:
             _LOGGER.info("Irrigation on %s cancelled", switch_entity)
@@ -492,7 +547,9 @@ def _async_register_services(
         )
         try:
             await asyncio.wait_for(done.wait(), timeout=timeout_seconds)
+            _set_pending(switch_entity, reason="completed")
         except asyncio.TimeoutError:
+            _set_pending(switch_entity, reason="timeout")
             _LOGGER.warning(
                 "Timeout on %s before volume target reached — forcing valve close",
                 switch_entity,
@@ -503,6 +560,9 @@ def _async_register_services(
         finally:
             unsub()
             if active_tasks.get(switch_entity) is my_task:
+                # Hand the precise server-measured volume to the run-log observer,
+                # which prefers it over the summation-delta estimate.
+                _set_pending(switch_entity, delivered=delivered)
                 active_tasks.pop(switch_entity, None)
                 async_dispatcher_send(hass, running_signal(switch_entity), False)
                 await _turn_off(switch_entity)

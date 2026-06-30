@@ -46,3 +46,39 @@ CONF_DURATION = "duration"
 def running_signal(switch_entity: str) -> str:
     """Dispatcher signal name carrying the running state for a valve's switch."""
     return f"{DOMAIN}_running_{switch_entity}"
+
+
+# ── Irrigation history (run log) ──
+
+# helpers.storage.Store key + version for the per-valve run log.
+STORAGE_KEY = f"{DOMAIN}_history"
+STORAGE_VERSION = 1
+
+# Event fired on the HA bus when a run finishes. Deliberately un-namespaced so
+# other irrigation integrations (e.g. a future Sonoff valve) can emit the same
+# event with the same schema; switch_entity + device_id disambiguate the source.
+EVENT_IRRIGATION_COMPLETED = "irrigation_completed"
+
+# Entity_id suffixes for the two integration-created history sensors. The card
+# discovers the history sensor from the switch prefix using HISTORY_SUFFIX.
+HISTORY_SUFFIX = "_irrigation_history"
+WATER_TOTAL_SUFFIX = "_irrigation_water_total"
+
+# Run-log retention: how many runs the Store keeps per valve, and how many the
+# history sensor exposes in its `runs` attribute (kept small to stay light).
+RUNS_STORE_CAP = 200
+RUNS_ATTR_CAP = 50
+
+# Seconds to wait after the valve reports 'off' before reading the final
+# summation_delivered — the device often pushes the last increment shortly after
+# closing, so we let it settle before finalizing the run's liters.
+LITERS_SETTLE = 2.5
+
+# Ignore on->off->on flaps shorter than this (seconds): a sub-MIN_RUN_S open is a
+# toggle/glitch, not a real irrigation run, and would create a spurious record.
+MIN_RUN_S = 2.0
+
+
+def history_signal(switch_entity: str) -> str:
+    """Dispatcher signal name fired when a valve's run log changes."""
+    return f"{DOMAIN}_history_{switch_entity}"

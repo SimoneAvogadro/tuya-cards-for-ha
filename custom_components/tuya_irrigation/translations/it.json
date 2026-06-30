@@ -25,6 +25,14 @@
       "irrigating": {
         "name": "Irrigazione in corso"
       }
+    },
+    "sensor": {
+      "irrigation_history": {
+        "name": "Storico irrigazioni"
+      },
+      "irrigation_water_total": {
+        "name": "Acqua totale irrigazione"
+      }
     }
   }
 }

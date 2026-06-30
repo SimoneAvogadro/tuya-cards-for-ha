@@ -1,6 +1,14 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.6.0 — Irrigation history. A nested second "+" inside the expanded "last
+ *          irrigation" view reveals a scrollable list of past runs (when /
+ *          duration / liters / outcome), read from the integration's new
+ *          sensor.<prefix>_irrigation_history `runs` attribute. The level-1 view
+ *          is unchanged (live device DPs while running, for real-time
+ *          monitoring); when idle it now prefers the persisted history record so
+ *          the summary survives a restart and isn't 24h-gated. New i18n:
+ *          history / noHistory + outcome labels (it/en/zh).
  * v2.5.1 — "Arresto…" overlay on stop, symmetric to the start overlay. Pressing
  *          stop covers the action panel (intercepting clicks) until the switch
  *          confirms off, with a 10s watchdog → "Arresto fallito". Prevents a
@@ -73,6 +81,8 @@ const I18N = {
     repeats: "Ripetizioni", cycles: "Cicli", cycleInterval: "Intervallo cicli",
     lastIrrigation: "Ultima irrigazione", duration: "Durata",
     start: "Inizio", end: "Fine", noRecent: "Nessuna irrigazione recente", none: "nessuna",
+    history: "Storico", noHistory: "Nessuna corsa registrata",
+    oc_completed: "Completata", oc_stopped: "Interrotta", oc_timeout: "Timeout", oc_shutdown: "Riavvio", oc_auto: "Auto", oc_manual: "Manuale",
     now: "adesso", minAgo: "${m} min fa", hoursAgo: "${h}h ${m}m fa",
     atSep: " alle ", today: "oggi",
     editorDevice: "Dispositivo irrigazione", editorSelect: "— Seleziona —",
@@ -98,6 +108,8 @@ const I18N = {
     repeats: "Repeats", cycles: "Cycles", cycleInterval: "Cycle interval",
     lastIrrigation: "Last irrigation", duration: "Duration",
     start: "Start", end: "End", noRecent: "No recent irrigation", none: "none",
+    history: "History", noHistory: "No runs recorded",
+    oc_completed: "Completed", oc_stopped: "Stopped", oc_timeout: "Timeout", oc_shutdown: "Restart", oc_auto: "Auto", oc_manual: "Manual",
     now: "just now", minAgo: "${m} min ago", hoursAgo: "${h}h ${m}m ago",
     atSep: " at ", today: "today",
     editorDevice: "Irrigation device", editorSelect: "— Select —",
@@ -123,6 +135,8 @@ const I18N = {
     repeats: "重复", cycles: "循环次数", cycleInterval: "循环间隔",
     lastIrrigation: "上次灌溉", duration: "持续时间",
     start: "开始", end: "结束", noRecent: "无近期灌溉记录", none: "无",
+    history: "历史", noHistory: "无记录",
+    oc_completed: "已完成", oc_stopped: "已停止", oc_timeout: "超时", oc_shutdown: "重启", oc_auto: "自动", oc_manual: "手动",
     now: "刚刚", minAgo: "${m}分钟前", hoursAgo: "${h}小时${m}分钟前",
     atSep: " ", today: "今天",
     editorDevice: "灌溉设备", editorSelect: "— 选择 —",
@@ -162,6 +176,7 @@ const SUFFIXES = {
   battery:       { domain: "sensor", suffix: "_battery" },
   start_time:    { domain: "sensor", suffix: "_irrigation_start_time" },
   end_time:      { domain: "sensor", suffix: "_irrigation_end_time" },
+  history:       { domain: "sensor", suffix: "_irrigation_history" },
 };
 const REQUIRED = ["mode", "target", "cycles", "interval", "last_duration", "summation"];
 
@@ -327,6 +342,8 @@ class IrrigationControlCard extends HTMLElement {
     this._inputLitri = 1; this._inputMin = 0; this._inputSec = 0;
     this._userEditedLitri = false; this._userEditedTempo = false;
     this._histExpanded = false;
+    this._histListExpanded = false;
+    this._histListSig = "";
     this._domCreated = false;
     this._el = {};
   }
@@ -695,6 +712,77 @@ class IrrigationControlCard extends HTMLElement {
     this._histExpanded = !this._histExpanded;
     this._render();
   }
+  _toggleHistList() {
+    this._histListExpanded = !this._histListExpanded;
+    this._render();
+  }
+
+  // Recorded runs from the integration's history sensor (newest first). Empty
+  // when the (updated) integration isn't present — the second "+" then hides.
+  _histRuns() {
+    const e = this._entities;
+    if (!e.history) return [];
+    const runs = this._hass?.states[e.history]?.attributes?.runs;
+    return Array.isArray(runs) ? runs : [];
+  }
+
+  // View model for the "last irrigation" summary (level 1). During a live run it
+  // is the device's live DPs (so the volume ticks up in real time, as before);
+  // when idle it prefers the reliable persisted history record (which survives a
+  // restart and isn't 24h-gated), falling back to the device DPs.
+  _histVM() {
+    const e = this._entities;
+    const running = this._isOn();
+    const runs = this._histRuns();
+    const lastRec = runs[0] || null;
+    let vol = this._nv(e.summation);
+    let dur = this._nv(e.last_duration);
+    let whenDate = this._tsDate(e.start_time);
+    let startISO = this._sv(e.start_time), endISO = this._sv(e.end_time);
+    const deviceFresh = this._ago(whenDate) !== null;
+    if (!running && !deviceFresh && lastRec) {
+      vol = (lastRec.liters != null) ? lastRec.liters : 0;
+      dur = (lastRec.duration_s != null) ? lastRec.duration_s : 0;
+      whenDate = lastRec.start ? new Date(lastRec.start) : null;
+      startISO = lastRec.start || null; endISO = lastRec.end || null;
+    }
+    const hasData = deviceFresh || (!running && !!lastRec);
+    return { running, hasHist: runs.length > 0, vol, dur, whenDate, startISO, endISO, hasData };
+  }
+
+  _outcomeClass(r) {
+    const reason = r && r.reason;
+    if (reason === "completed") return "ok";
+    if (reason === "timeout" || reason === "shutdown") return "warn";
+    return "neutral";
+  }
+  _outcomeLabel(r) {
+    const map = { completed: "oc_completed", stopped: "oc_stopped", timeout: "oc_timeout", shutdown: "oc_shutdown", auto_off: "oc_auto", manual_off: "oc_manual" };
+    return _t(this._hass, map[r && r.reason] || "oc_completed");
+  }
+
+  // Build the nested run list (level 2). Only builds when expanded; a signature
+  // guard avoids rebuilding the innerHTML on every 1s render tick.
+  _renderHistList() {
+    const el = this._el.histList;
+    if (!el || !this._histListExpanded) return;
+    const runs = this._histRuns();
+    const sig = runs.length + "|" + ((runs[0] && runs[0].start) || "") + "|" + ((runs[0] && runs[0].end) || "");
+    if (sig === this._histListSig && el.dataset.built === "1") return;
+    this._histListSig = sig;
+    if (!runs.length) {
+      el.innerHTML = `<div class="hl-empty">${_t(this._hass, "noHistory")}</div>`;
+      el.dataset.built = "1";
+      return;
+    }
+    el.innerHTML = runs.map((r) => {
+      const when = this._smartDate(r.start ? new Date(r.start) : null) || "";
+      const dur = (r.duration_s != null) ? this._fd(r.duration_s) : "";
+      const vol = (r.liters != null) ? this._fmtVolShortNum(r.liters) + " L" : "—";
+      return `<div class="hl-row" title="${this._outcomeLabel(r)}"><span class="hl-dot ${this._outcomeClass(r)}"></span><span class="hl-when">${when}</span><span class="hl-dur">${dur}</span><span class="hl-vol">${vol}</span></div>`;
+    }).join("");
+    el.dataset.built = "1";
+  }
 
   // ── Render dispatcher ──
   _render() {
@@ -716,13 +804,15 @@ class IrrigationControlCard extends HTMLElement {
     const cyc = this._nv(e.cycles); const schedOn = cyc > 1;
     const ivS = this._nv(e.interval);
     const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
-    const dur = this._nv(e.last_duration);
-    const vol = this._nv(e.summation);
-    const ago = this._ago(this._tsDate(e.start_time));
     const name = this._getName();
-    const stLocal = this._fmtLocalTime(this._sv(e.start_time));
-    const etLocal = this._fmtLocalTime(this._sv(e.end_time));
+    const vm = this._histVM();
+    const dur = vm.dur, vol = vm.vol;
+    const ago = this._ago(vm.whenDate);
+    const smart = this._smartDate(vm.whenDate);
+    const stLocal = this._fmtLocalTime(vm.startISO);
+    const etLocal = this._fmtLocalTime(vm.endISO);
     const hasStEt = !!(stLocal && etLocal);
+    const hasData = vm.hasData;
 
     const { tp, lp } = this._runView();
     const tempoActive = !!tp, litriActive = !!lp;
@@ -825,6 +915,19 @@ ha-card{overflow:hidden}
 .detail-row{display:flex;align-items:center;gap:8px;padding:4px 0 0 48px}
 .detail-label{font-size:11px;color:var(--th);min-width:36px}
 .detail-val{font-size:13px;font-weight:500;color:var(--tm);font-family:monospace}
+.hist-list-sec{margin-top:10px;border-top:1px solid var(--bd);padding-top:8px}
+.hist-list-head{display:flex;align-items:center;justify-content:space-between}
+.hist-list-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th)}
+.hist-list{margin-top:8px;max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.hl-row{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:6px;background:var(--bd)}
+.hl-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--th)}
+.hl-dot.ok{background:var(--accent)}
+.hl-dot.warn{background:#eab308}
+.hl-dot.neutral{background:var(--th)}
+.hl-when{flex:1;min-width:0;font-size:12px;color:var(--tm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hl-dur{font-size:11px;color:var(--ts);font-family:monospace;white-space:nowrap}
+.hl-vol{font-size:11px;color:var(--tm);font-family:monospace;white-space:nowrap;min-width:44px;text-align:right}
+.hl-empty{font-size:12px;color:var(--th);text-align:center;padding:10px;font-style:italic}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 input[type=number]{-moz-appearance:textfield}
 .intg-missing{background:rgba(226,85,85,.12);color:var(--danger);border:1px solid rgba(226,85,85,.3);border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;text-align:center;display:none}
@@ -896,13 +999,13 @@ input[type=number]{-moz-appearance:textfield}
     </div>
     <div class="dv ${modeOpen?"vi":""}" id="divider"></div>
     <div class="sc" style="margin-bottom:0">
-      <div class="hist-compact" id="hist-compact" style="display:${this._histExpanded&&ago!==null?"none":"flex"}">
+      <div class="hist-compact" id="hist-compact" style="display:${this._histExpanded&&hasData?"none":"flex"}">
         <span class="hist-compact-label">${t("lastIrrigation")}</span>
-        <span class="hist-when ${ago===null?"none":""}" id="hist-when">${ago===null?": "+t("none"):this._smartDate(this._tsDate(e.start_time))}</span>
-        <span class="hist-vol" id="hist-vol" style="display:${ago!==null?"inline":"none"}"><span class="hist-vol-label">${t("liters")}:</span> <span id="hist-vol-val">${this._fmtVolShortNum(vol)}</span></span>
-        <button class="exp-btn" id="hexp-compact" style="display:${ago!==null?"flex":"none"}">+</button>
+        <span class="hist-when ${hasData?"":"none"}" id="hist-when">${hasData?(smart||""):": "+t("none")}</span>
+        <span class="hist-vol" id="hist-vol" style="display:${hasData?"inline":"none"}"><span class="hist-vol-label">${t("liters")}:</span> <span id="hist-vol-val">${this._fmtVolShortNum(vol)}</span></span>
+        <button class="exp-btn" id="hexp-compact" style="display:${hasData?"flex":"none"}">+</button>
       </div>
-      <div class="hist-expanded" id="hist-expanded" style="display:${this._histExpanded&&ago!==null?"block":"none"}">
+      <div class="hist-expanded" id="hist-expanded" style="display:${this._histExpanded&&hasData?"block":"none"}">
         <div class="sl">${t("lastIrrigation")}</div>
         <div class="hrow">
           <div class="hi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--th)" stroke-width="2.2" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg></div>
@@ -917,12 +1020,20 @@ input[type=number]{-moz-appearance:textfield}
           <div class="detail-row"><span class="detail-label">${t("start")}</span><span class="detail-val" id="dv-start">${stLocal || ""}</span></div>
           <div class="detail-row"><span class="detail-label">${t("end")}</span><span class="detail-val" id="dv-end">${etLocal || ""}</span></div>
         </div>
+        <div class="hist-list-sec" id="hist-list-sec" style="display:${vm.hasHist?"block":"none"}">
+          <div class="hist-list-head">
+            <span class="hist-list-title">${t("history")}</span>
+            <button class="exp-btn ${this._histListExpanded?"open":""}" id="hlist-btn">${this._histListExpanded?"\u2212":"+"}</button>
+          </div>
+          <div class="hist-list" id="hist-list" style="display:${this._histListExpanded?"flex":"none"}"></div>
+        </div>
       </div>
     </div>
   </div>
 </ha-card>`;
     this._cacheEls();
     this._bindEvents();
+    this._renderHistList();
   }
 
   _cacheEls() {
@@ -950,6 +1061,7 @@ input[type=number]{-moz-appearance:textfield}
       startOv: $("start-ov"), startOvTxt: $("start-ov-txt"),
       hv: q(".hv"), hlb: q(".hlb"), htx: q(".htx"),
       expBtn: $("hexp"), expBtnCompact: $("hexp-compact"),
+      histListSec: $("hist-list-sec"), hlistBtn: $("hlist-btn"), histList: $("hist-list"),
       dvStart: $("dv-start"), dvEnd: $("dv-end"),
     };
   }
@@ -971,6 +1083,7 @@ input[type=number]{-moz-appearance:textfield}
     el.ivMm?.addEventListener("change", () => this._setIv());
     el.expBtn?.addEventListener("click", () => this._toggleHist());
     el.expBtnCompact?.addEventListener("click", () => this._toggleHist());
+    el.hlistBtn?.addEventListener("click", () => this._toggleHistList());
   }
 
   // ── Selective DOM update (runs on every subsequent hass update) ──
@@ -981,13 +1094,15 @@ input[type=number]{-moz-appearance:textfield}
     const cyc = this._nv(e.cycles); const schedOn = cyc > 1;
     const ivS = this._nv(e.interval);
     const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
-    const dur = this._nv(e.last_duration);
-    const vol = this._nv(e.summation);
-    const ago = this._ago(this._tsDate(e.start_time));
     const name = this._getName();
-    const stLocal = this._fmtLocalTime(this._sv(e.start_time));
-    const etLocal = this._fmtLocalTime(this._sv(e.end_time));
+    const vm = this._histVM();
+    const dur = vm.dur, vol = vm.vol;
+    const ago = this._ago(vm.whenDate);
+    const smart = this._smartDate(vm.whenDate);
+    const stLocal = this._fmtLocalTime(vm.startISO);
+    const etLocal = this._fmtLocalTime(vm.endISO);
     const hasStEt = !!(stLocal && etLocal);
+    const hasData = vm.hasData;
 
     const { tp, lp } = this._runView();
     const tempoActive = !!tp, litriActive = !!lp;
@@ -1083,14 +1198,12 @@ input[type=number]{-moz-appearance:textfield}
       this._setInput(el.ivMm, this._p2(ivM));
     }
 
-    // ── History: three states (empty / compact / expanded) ──
-    const hasData = ago !== null;
+    // ── History: compact / expanded summary + nested run list (level 2) ──
     const showExpanded = this._histExpanded && hasData;
-    const smart = this._smartDate(this._tsDate(e.start_time));
     if (el.histCompact) el.histCompact.style.display = showExpanded ? "none" : "flex";
     if (el.histExpanded) el.histExpanded.style.display = showExpanded ? "block" : "none";
     if (el.histWhen) {
-      this._txt(el.histWhen, hasData ? smart : ": " + t("none"));
+      this._txt(el.histWhen, hasData ? (smart || "") : ": " + t("none"));
       this._cls(el.histWhen, "none", !hasData);
     }
     if (el.histVol) el.histVol.style.display = hasData ? "inline" : "none";
@@ -1099,13 +1212,19 @@ input[type=number]{-moz-appearance:textfield}
       this._txt(el.histVolVal, this._fmtVolShortNum(vol));
       this._txt(el.hv, this._fmtVol(vol));
       this._txt(el.hlb, t("duration") + ": " + this._fd(dur));
-      this._txt(el.htx, ago);
+      this._txt(el.htx, ago || "");
       if (el.histDetail) el.histDetail.style.display = hasStEt ? "block" : "none";
       if (hasStEt) {
         this._txt(el.dvStart, stLocal);
         this._txt(el.dvEnd, etLocal);
       }
     }
+    // Nested run list (level 2): the "+" appears only when the integration's
+    // history sensor has runs; degrades gracefully when the sensor is absent.
+    if (el.histListSec) el.histListSec.style.display = vm.hasHist ? "block" : "none";
+    if (el.hlistBtn) { this._txt(el.hlistBtn, this._histListExpanded ? "−" : "+"); this._cls(el.hlistBtn, "open", this._histListExpanded); }
+    if (el.histList) el.histList.style.display = this._histListExpanded ? "flex" : "none";
+    this._renderHistList();
   }
 
   disconnectedCallback() { this._stopTick(); }
@@ -1133,4 +1252,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.2.6 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.6.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

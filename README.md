@@ -21,7 +21,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + bundled ZHA quirks | v2.5.3 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + bundled ZHA quirks | v2.5.3 |
 | `irrigation-control-card` | Lovelace card driving the services above | v2.5.3 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
@@ -95,6 +95,33 @@ You'll see one `Shutdown safety: closing open irrigation valve <entity>` WARNING
 
 ---
 
+## Irrigation history
+
+Every completed run — whether started from the card, an automation, a bare `switch.turn_on`, the physical button, or the firmware's own auto-off — is recorded **server-side** and kept across restarts (and even when the device stops reporting its DPs). The log is the integration's system of record: a `.storage/` JSON file, **outside the recorder DB**, so it never bloats it or gets purged.
+
+Each detected valve gains two entities:
+
+| Entity | What it is |
+|---|---|
+| `sensor.<prefix>_irrigation_history` | Timestamp of the last completed run. Its `runs` attribute is the recent-run list (newest first: `start`, `end`, `duration_s`, `liters`, `mode`, `target`, `source`, `reason`) that the card's history view reads. The list attribute is excluded from the recorder. |
+| `sensor.<prefix>_irrigation_water_total` | Cumulative liters delivered — `total_increasing` / `device_class: water`, so it drops straight into Home Assistant's **water dashboard** and long-term statistics. (The device's own `summation_delivered` resets per session, so the integration keeps this running total itself.) |
+
+Duration is measured server-side from the valve's open→close (no dependence on the device RTC); liters come from the precise server-measured volume for integration runs, or a reset-safe `summation_delivered` delta for manual ones.
+
+On each finished run the integration also fires an **`irrigation_completed`** event on the HA bus, so automations can react (e.g. notify when watering ends):
+
+```yaml
+trigger:
+  - platform: event
+    event_type: irrigation_completed
+# event.data: switch_entity, device_id, start, end, duration_s, liters,
+#             mode, target, source, reason
+```
+
+The event name is deliberately un-namespaced so other irrigation integrations can emit the same event with the same schema; `switch_entity` / `device_id` disambiguate the source.
+
+---
+
 ## Device actions (automation builder)
 
 When you build an automation by **selecting a device first**, any recognized irrigation valve gains two extra actions:
@@ -129,7 +156,7 @@ Compact card for the GiEX valve — replaces a handful of scattered entities wit
 
 - **Dual-mode manual irrigation**: by liters or by seconds, dispatched server-side.
 - **Device-truth progress bar**: derived from the device's own telemetry, not a client timer. Tempo uses `irrigation_end_time − irrigation_start_time`; Liters uses `summation_delivered / target`. Survives a browser refresh, stays in sync across tabs, never drifts, and shows progress even for automation-started runs.
-- **History**: last volume + duration + relative timestamp, collapsible start/end times.
+- **History**: the expanded "last irrigation" view (live while a run is in progress) nests a second **"+"** that opens a scrollable list of past runs (when / duration / liters / outcome), read from `sensor.<prefix>_irrigation_history`. See [Irrigation history](#irrigation-history).
 - **Auto-discovery** from a single switch entity; **visual editor** lists only switches with all companion entities.
 - **Battery indicator**, **integration-missing banner**, **theme-aware** (HA CSS variables).
 
@@ -154,6 +181,7 @@ name: Irrigatore 31  # optional, defaults to friendly_name
 | battery | sensor | `_battery` | No |
 | start_time | sensor | `_irrigation_start_time` | No |
 | end_time | sensor | `_irrigation_end_time` | No |
+| history | sensor | `_irrigation_history` | No |
 
 ---
 

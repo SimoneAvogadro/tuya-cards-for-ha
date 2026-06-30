@@ -13,7 +13,7 @@ This project targets two devices in particular — and ships a dedicated Lovelac
 | **GiEX QT06 smart irrigation valve** | TS0601 — `_TZE200_a7sghmms`, `_TZE204_a7sghmms`, `_TZE200_7ytb3h8u`, `_TZE204_7ytb3h8u`, `_TZE284_7ytb3h8u` | `irrigation_by_seconds` / `irrigation_by_liters` services + `irrigation-control-card` + a quirk that fixes clock-sync and start/end-time stamps |
 | **HOBEIAN ZG-303Z 3-in-1 soil sensor** (Excellux) | `HOBEIAN ZG-303Z` | `soil-moisture-card` (soil moisture + temperature + air humidity) + a DP-mapping quirk |
 
-A third quirk for the `_TZ3000_fdxihpp7` / `_TZ3000_mkhkxx1p` (TS0001 switch) is also bundled — see [Bundled ZHA quirks](#bundled-zha-quirks). Cards auto-discover their entities from a single primary entity, and a card for a device you don't have simply stays invisible.
+Cards auto-discover their entities from a single primary entity, and a card for a device you don't have simply stays invisible. Other Tuya quirks (e.g. the `TS0001` switch) now live in a dedicated repo — see [Bundled ZHA quirks](#bundled-zha-quirks).
 
 ![Dashboard with the soil-moisture and irrigation-control cards](screenshot1.png)
 
@@ -21,8 +21,8 @@ A third quirk for the `_TZ3000_fdxihpp7` / `_TZ3000_mkhkxx1p` (TS0001 switch) is
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + bundled ZHA quirks | v2.5.2 |
-| `irrigation-control-card` | Lovelace card driving the services above | v2.5.2 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + bundled ZHA quirks | v2.5.3 |
+| `irrigation-control-card` | Lovelace card driving the services above | v2.5.3 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
 ## Installation (HACS)

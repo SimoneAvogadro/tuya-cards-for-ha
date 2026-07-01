@@ -1,8 +1,8 @@
 # Irrigation history — design spec
 
 **Date:** 2026-06-30
-**Status:** Approved design (pre-implementation)
-**Target version:** v2.6.0 (new feature → minor bump, tagged when the user says so)
+**Status:** Implemented — shipped in v2.6.0 (2026-07-01)
+**Target version:** v2.6.0
 
 ## Goal
 

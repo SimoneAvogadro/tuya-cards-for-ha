@@ -29,8 +29,11 @@ irrigation_by_liters:
   name: Irrigation By Liters
   description: >-
     Open the given valve, monitor the device's _summation_delivered sensor, and
-    close the valve when the configured volume has been delivered. A safety
-    timeout guarantees the valve is closed even if the flow sensor gets stuck.
+    close the valve when the configured volume has been delivered. Two safety
+    nets bound a run that never reaches its target: a stall watchdog closes the
+    valve if no water is measured for ~5 minutes, and an adaptive cap tightens
+    the maximum runtime toward the measured flow rate (never beyond the safety
+    timeout below).
   fields:
     switch_entity:
       name: Valve
@@ -51,11 +54,13 @@ irrigation_by_liters:
           unit_of_measurement: L
           mode: box
     timeout_seconds:
-      name: Safety timeout
+      name: Safety timeout (max run time)
       description: >-
-        Maximum time the valve is allowed to stay open before it is forcibly
-        closed, regardless of whether the target volume has been reached.
-        Defaults to 3600 (1 hour).
+        Maximum time the valve may stay open before it is forcibly closed,
+        whether or not the target volume is reached. The adaptive cap only
+        tightens this downward — closing sooner when the sampled flow rate says
+        the run should already be done — never later. A stalled flow still
+        closes the valve within ~5 minutes regardless. Defaults to 3600 (1 hour).
       required: false
       default: 3600
       selector:

@@ -59,13 +59,13 @@ Opens the valve, waits N seconds **server-side**, closes it — independent of t
 
 ### `tuya_irrigation.irrigation_by_liters`
 
-Opens the valve, watches `sensor.<prefix>_summation_delivered`, closes when the target volume is delivered (or the safety timeout fires).
+Opens the valve, watches `sensor.<prefix>_summation_delivered`, closes when the target volume is delivered. Two safety nets bound a run that never reaches its target: a **stall watchdog** (no measured water for ~5 min → close) and an **adaptive cap** that tightens the maximum runtime toward the flow rate sampled in the first ~2 min — closing sooner when the run should already be done, never past the safety timeout.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `switch_entity` | entity_id (switch) | yes | Valve switch to control |
 | `liters` | number [0.001, 10000] | yes | Target volume to deliver |
-| `timeout_seconds` | int [60, 86400] | no (default 3600) | Force-close if volume never reached |
+| `timeout_seconds` | int [60, 86400] | no (default 3600) | Safety timeout — max time the valve may stay open; the adaptive cap only tightens it downward, never extends it |
 
 ```yaml
 - service: tuya_irrigation.irrigation_by_liters
@@ -128,7 +128,7 @@ When you build an automation by **selecting a device first**, any recognized irr
 
 | Action | Field | Calls |
 | --- | --- | --- |
-| **Irriga per litri** / *Irrigate by liters* | Liters | `irrigation_by_liters` (timeout fixed at 3600 s) |
+| **Irriga per litri** / *Irrigate by liters* | Liters | `irrigation_by_liters` (adaptive safety cap, 3600 s max) |
 | **Irriga per tempo** / *Irrigate for a duration* | Duration (hh:mm:ss) | `irrigation_by_seconds` |
 
 **Valve auto-detection:** a device qualifies when it has both a `switch.*` entity and a `sensor.*` entity with `device_class` `volume` or `water` (energy-metering sockets are ignored). Each detected valve also gets an **"Irrigazione in corso" / "Irrigating"** `binary_sensor`, `on` while a server-side run is active — this association is what surfaces the device actions and gives live feedback.

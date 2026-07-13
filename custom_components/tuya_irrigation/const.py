@@ -21,8 +21,28 @@ ATTR_SECONDS = "seconds"
 ATTR_LITERS = "liters"
 ATTR_TIMEOUT_SECONDS = "timeout_seconds"
 
-# Default safety timeout for liters mode (1 hour).
+# Default safety timeout for liters mode (1 hour). This is the MAXIMUM the valve
+# may stay open: the adaptive cap (see below) only ever tightens the ceiling
+# below it, never extends past it. LITERS_HARD_GUARD_S is an absolute backstop
+# that bounds even a larger caller-supplied timeout.
 DEFAULT_LITERS_TIMEOUT = 3600
+
+# ── Liters-mode safeguards ──
+# A by-liters run closes when the target volume is delivered. Two independent
+# safety nets bound a run that never reaches its target:
+#   1. Stall watchdog: if no water is measured for LITERS_STALL_WINDOW_S, the
+#      flow is dead (stuck sensor / no delivery) -> close. A slow but *alive*
+#      run keeps resetting it and is never cut off by it.
+#   2. Adaptive cap: sample the flow rate over the first LITERS_SAMPLE_WINDOW_S,
+#      estimate the total run duration, and TIGHTEN the ceiling down to
+#      estimate * LITERS_ESTIMATE_MARGIN when that is sooner than the caller's
+#      timeout — so a run we expect to finish in 10 min is not left open a full
+#      hour. The cap never exceeds the caller's timeout, nor LITERS_HARD_GUARD_S.
+LITERS_SAMPLE_WINDOW_S = 120  # flow-rate sampling window (s)
+LITERS_STALL_WINDOW_S = 300  # max time with no measured flow before closing (s)
+LITERS_ESTIMATE_MARGIN = 1.20  # headroom applied to the estimated duration
+LITERS_HARD_GUARD_S = 7200  # absolute ceiling on total runtime, caps timeout too (2 h)
+LITERS_CHECK_INTERVAL_S = 5  # monitoring loop tick (s) — bounds close latency
 
 # Entity suffix used to discover the water-delivered counter sensor from a switch entity_id.
 SUMMATION_SUFFIX = "_summation_delivered"

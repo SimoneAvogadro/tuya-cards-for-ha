@@ -34,6 +34,11 @@ from .const import (
     DEFAULT_LITERS_TIMEOUT,
     DOMAIN,
     JSMODULES,
+    LITERS_CHECK_INTERVAL_S,
+    LITERS_ESTIMATE_MARGIN,
+    LITERS_HARD_GUARD_S,
+    LITERS_SAMPLE_WINDOW_S,
+    LITERS_STALL_WINDOW_S,
     SERVICE_IRRIGATION_BY_LITERS,
     SERVICE_IRRIGATION_BY_SECONDS,
     SUMMATION_SUFFIX,
@@ -372,6 +377,153 @@ async def _async_push_run_plan(
         )
 
 
+# User-facing interruption messages, keyed by reason then language code. Mirrors
+# the card's own I18N table (it/en/zh) rather than strings.json, because a
+# persistent_notification is a single server-side string, not a per-viewer
+# framework surface. ``{minutes}`` is derived from LITERS_STALL_WINDOW_S at send
+# time so the copy can never drift from the constant. English is the fallback for
+# any other HA language.
+_NOTIFY_MESSAGES: dict[str, dict[str, tuple[str, str]]] = {
+    "stalled": {
+        "it": (
+            "Irrigazione interrotta: nessun flusso",
+            "La valvola **{name}** è stata chiusa: nessuna erogazione rilevata "
+            "per ~{minutes} minuti (erogati {delivered} di {target} L). "
+            "Controlla mandata e valvola.",
+        ),
+        "en": (
+            "Irrigation stopped: no flow",
+            "Valve **{name}** was closed: no water measured for ~{minutes} "
+            "minutes ({delivered} of {target} L delivered). "
+            "Check the water supply and valve.",
+        ),
+        "zh": (
+            "灌溉已停止：无水流",
+            "阀门 **{name}** 已关闭：约 {minutes} 分钟内未检测到水流"
+            "（已输送 {delivered} / {target} L）。请检查供水和阀门。",
+        ),
+    },
+    "timeout": {
+        "it": (
+            "Irrigazione interrotta: tempo massimo",
+            "La valvola **{name}** è stata chiusa al limite di sicurezza dopo "
+            "aver erogato {delivered} di {target} L senza raggiungere il target.",
+        ),
+        "en": (
+            "Irrigation stopped: safety limit",
+            "Valve **{name}** was closed at the safety limit after delivering "
+            "{delivered} of {target} L without reaching the target.",
+        ),
+        "zh": (
+            "灌溉已停止：安全上限",
+            "阀门 **{name}** 已在安全上限关闭，已输送 {delivered} / {target} L，"
+            "未达到目标。",
+        ),
+    },
+    "close_failed": {
+        "it": (
+            "Irrigazione: chiusura valvola non riuscita",
+            "Non è stato possibile chiudere la valvola **{name}** — potrebbe "
+            "essere ancora aperta! Erogati {delivered} di {target} L. "
+            "Controlla la valvola manualmente.",
+        ),
+        "en": (
+            "Irrigation: valve failed to close",
+            "Could not close valve **{name}** — it may still be open! Delivered "
+            "{delivered} of {target} L. Check the valve manually.",
+        ),
+        "zh": (
+            "灌溉：阀门关闭失败",
+            "无法关闭阀门 **{name}** —— 它可能仍处于打开状态！已输送 "
+            "{delivered} / {target} L。请手动检查阀门。",
+        ),
+    },
+}
+
+
+def _notify_lang(hass: HomeAssistant) -> str:
+    """Map the HA UI language to one of the catalog's supported codes."""
+    lang = (hass.config.language or "en").lower()
+    if lang.startswith("it"):
+        return "it"
+    if lang.startswith("zh"):
+        return "zh"
+    return "en"
+
+
+async def _async_notify_interruption(
+    hass: HomeAssistant,
+    switch_entity: str,
+    reason: str,
+    delivered: float,
+    liters: float,
+) -> None:
+    """Best-effort: surface an anomalous by-liters close as an HA notification.
+
+    A stall (no flow), an adaptive-cap close, or a failed valve close is an
+    "error" the user may want to act on manually. We raise a
+    ``persistent_notification`` so it shows in the HA UI; the
+    ``irrigation_completed`` event is still fired for anyone wanting richer
+    automations. Per-valve ``notification_id`` so a new interruption replaces the
+    previous one for that valve instead of stacking, and so a fresh run can
+    dismiss a stale one (see ``_async_dismiss_interruption``).
+
+    Fully guarded: any failure is logged and swallowed — notifying must never
+    block or fail the valve close.
+    """
+    try:
+        state = hass.states.get(switch_entity)
+        name = (
+            state.attributes.get("friendly_name") if state else None
+        ) or switch_entity
+        by_lang = _NOTIFY_MESSAGES.get(reason, _NOTIFY_MESSAGES["timeout"])
+        title, template = by_lang.get(_notify_lang(hass), by_lang["en"])
+        message = template.format(
+            name=name,
+            delivered=f"{delivered:.1f}",
+            target=f"{liters:g}",
+            minutes=LITERS_STALL_WINDOW_S // 60,
+        )
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": title,
+                "message": message,
+                "notification_id": f"{DOMAIN}_interrupted_{switch_entity}",
+            },
+            blocking=False,
+        )
+        _LOGGER.debug("Notified %s interruption (%s)", switch_entity, reason)
+    except Exception as err:  # noqa: BLE001 - best-effort, never block the close
+        _LOGGER.warning(
+            "Interruption notification for %s failed (non-fatal): %s",
+            switch_entity,
+            err,
+        )
+
+
+async def _async_dismiss_interruption(
+    hass: HomeAssistant, switch_entity: str
+) -> None:
+    """Clear any prior interruption notification for this valve (best-effort).
+
+    Called at the start of a fresh run: the user is acting on the valve again, so
+    a lingering "no flow / safety limit" alert from an earlier run is stale.
+    """
+    try:
+        await hass.services.async_call(
+            "persistent_notification",
+            "dismiss",
+            {"notification_id": f"{DOMAIN}_interrupted_{switch_entity}"},
+            blocking=False,
+        )
+    except Exception as err:  # noqa: BLE001 - best-effort
+        _LOGGER.debug(
+            "Dismiss interruption for %s failed (non-fatal): %s", switch_entity, err
+        )
+
+
 def _async_register_services(
     hass: HomeAssistant,
     active_tasks: dict[str, asyncio.Task],
@@ -384,13 +536,16 @@ def _async_register_services(
             "switch", "turn_on", {"entity_id": switch_entity}, blocking=True
         )
 
-    async def _turn_off(switch_entity: str) -> None:
+    async def _turn_off(switch_entity: str) -> bool:
+        """Close the valve. Returns True on success, False if the call failed."""
         try:
             await hass.services.async_call(
                 "switch", "turn_off", {"entity_id": switch_entity}, blocking=True
             )
+            return True
         except Exception as err:  # pragma: no cover - defensive
             _LOGGER.error("Failed to turn off %s: %s", switch_entity, err)
+            return False
 
     def _cancel_existing(switch_entity: str) -> None:
         existing = active_tasks.get(switch_entity)
@@ -437,6 +592,9 @@ def _async_register_services(
         """
         _cancel_existing(switch_entity)
         managed_switches.add(switch_entity)
+        # A fresh run supersedes any earlier fault: clear a stale "no flow /
+        # safety limit" alert so it can't linger past a run the user just started.
+        await _async_dismiss_interruption(hass, switch_entity)
         await _async_push_run_plan(hass, switch_entity, mode, target)
         await _async_push_device_time(hass, switch_entity)
         await asyncio.sleep(_TIME_SYNC_SETTLE)
@@ -511,10 +669,15 @@ def _async_register_services(
             prev_reading = 0.0
         delivered = 0.0
         done = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        start_t = loop.time()
+        # Last time we saw water move. The stall watchdog measures inactivity
+        # from here; seeded to start so a valve that never delivers still trips.
+        last_flow_t = start_t
 
         @callback
         def _listener(event) -> None:
-            nonlocal prev_reading, delivered
+            nonlocal prev_reading, delivered, last_flow_t
             new_state = event.data.get("new_state")
             if new_state is None or new_state.state in ("unknown", "unavailable"):
                 return
@@ -522,12 +685,14 @@ def _async_register_services(
                 current = float(new_state.state)
             except (TypeError, ValueError):
                 return
-            if current >= prev_reading:
+            if current > prev_reading:
                 delivered += current - prev_reading
-            else:
+                last_flow_t = loop.time()
+            elif current < prev_reading:
                 # Counter reset (e.g. device zeroed for a new session): the
                 # increment since the reset is the new value itself.
                 delivered += current
+                last_flow_t = loop.time()
             prev_reading = current
             if delivered >= liters:
                 _LOGGER.info(
@@ -540,21 +705,130 @@ def _async_register_services(
 
         unsub = async_track_state_change_event(hass, [summation_entity], _listener)
         _LOGGER.info(
-            "Irrigation on %s for %.3f L (timeout %ds, started)",
+            "Irrigation on %s for %.3f L (safety max %ds, started)",
             switch_entity,
             liters,
             timeout_seconds,
         )
+        # The cap is the MAX the valve may stay open. It starts at the caller's
+        # timeout (bounded by the absolute hard guard) and is only ever tightened
+        # DOWN once we've sampled the flow rate — a run we expect to finish soon
+        # is not left open for the full timeout.
+        cap = min(float(timeout_seconds), float(LITERS_HARD_GUARD_S))
+        sampled = False
+        # Set at an anomalous break (stall / cap) so the finally can fire a
+        # user-facing notification for the close it actually owns. Stays None for
+        # a clean completion, an external close, or a cancellation.
+        interrupt_reason: str | None = None
+        # True once we've been cancelled (superseding run / shutdown): suppresses
+        # the finally's notification, which only the run's own faults should fire.
+        cancelled = False
+        # True once we've observed the valve actually open. Guards the
+        # external-close check against the startup window, where the switch can
+        # still read "off" because `_turn_on` (running in `_async_begin_run`)
+        # hasn't confirmed yet — without this we'd mistake "not open yet" for
+        # "closed by someone else" and abandon the run before it started.
+        seen_on = False
         try:
-            await asyncio.wait_for(done.wait(), timeout=timeout_seconds)
-            _set_pending(switch_entity, reason="completed")
-        except asyncio.TimeoutError:
-            _set_pending(switch_entity, reason="timeout")
-            _LOGGER.warning(
-                "Timeout on %s before volume target reached — forcing valve close",
-                switch_entity,
-            )
+            while True:
+                try:
+                    await asyncio.wait_for(
+                        done.wait(), timeout=LITERS_CHECK_INTERVAL_S
+                    )
+                    _set_pending(switch_entity, reason="completed")
+                    break
+                except asyncio.TimeoutError:
+                    pass  # periodic tick — evaluate the safety nets below
+
+                # The valve was closed outside our control (card stop button,
+                # physical button, Tuya app, an automation's switch.turn_off, or
+                # the device's own native auto-off): we are now a zombie monitor,
+                # not the closer. End quietly — this is not a fault, so leave
+                # interrupt_reason None and raise no alert. Gated on having seen
+                # the valve open first (see seen_on) so the pre-open window isn't
+                # mistaken for an external close; only a confirmed "off" counts,
+                # "unavailable"/"unknown" keeps the stall watchdog in charge.
+                sw_state = hass.states.get(switch_entity)
+                sw = sw_state.state if sw_state is not None else None
+                if sw == "on":
+                    seen_on = True
+                elif seen_on and sw == "off":
+                    _LOGGER.info(
+                        "%s closed externally — ending by-liters monitor "
+                        "(delivered %.3f of %.3f L)",
+                        switch_entity,
+                        delivered,
+                        liters,
+                    )
+                    break
+
+                now = loop.time()
+                elapsed = now - start_t
+
+                # Tighten the cap from the flow rate measured over the first
+                # sample window. Done once; the estimate is then frozen.
+                if not sampled and elapsed >= LITERS_SAMPLE_WINDOW_S:
+                    sampled = True
+                    rate = delivered / elapsed  # L/s
+                    if rate > 0:
+                        estimate = liters / rate
+                        # Tighten the ceiling toward the estimate when that is
+                        # sooner than the caller's timeout; never past the timeout
+                        # or the absolute hard guard.
+                        cap = min(
+                            float(timeout_seconds),
+                            estimate * LITERS_ESTIMATE_MARGIN,
+                            float(LITERS_HARD_GUARD_S),
+                        )
+                        _LOGGER.info(
+                            "%s flow sample: %.3f L in %.0fs (%.3f L/s) — "
+                            "estimated %.0fs to target, cap tightened to %.0fs",
+                            switch_entity,
+                            delivered,
+                            elapsed,
+                            rate,
+                            estimate,
+                            cap,
+                        )
+                    else:
+                        _LOGGER.info(
+                            "%s no flow in first %.0fs — cap stays at %.0fs, "
+                            "stall watchdog will close it if flow stays dead",
+                            switch_entity,
+                            elapsed,
+                            cap,
+                        )
+
+                # Stall watchdog: no measured water for the whole window means
+                # the flow is dead (stuck sensor / no delivery), not just slow.
+                if now - last_flow_t >= LITERS_STALL_WINDOW_S:
+                    interrupt_reason = "stalled"
+                    _set_pending(switch_entity, reason=interrupt_reason)
+                    _LOGGER.warning(
+                        "No flow on %s for %.0fs (delivered %.3f of %.3f L) — "
+                        "flow stalled, forcing valve close",
+                        switch_entity,
+                        now - last_flow_t,
+                        delivered,
+                        liters,
+                    )
+                    break
+
+                # Adaptive absolute cap: last-resort ceiling on total runtime.
+                if elapsed >= cap:
+                    interrupt_reason = "timeout"
+                    _set_pending(switch_entity, reason=interrupt_reason)
+                    _LOGGER.warning(
+                        "Adaptive cap reached on %s after %.0fs "
+                        "(delivered %.3f of %.3f L) — forcing valve close",
+                        switch_entity,
+                        elapsed,
+                        delivered,
+                        liters,
+                    )
+                    break
         except asyncio.CancelledError:
+            cancelled = True
             _LOGGER.info("Irrigation on %s cancelled", switch_entity)
             raise
         finally:
@@ -565,7 +839,21 @@ def _async_register_services(
                 _set_pending(switch_entity, delivered=delivered)
                 active_tasks.pop(switch_entity, None)
                 async_dispatcher_send(hass, running_signal(switch_entity), False)
-                await _turn_off(switch_entity)
+                closed = await _turn_off(switch_entity)
+                # Notifications are for THIS run's own faults only. A supersede /
+                # shutdown arrives as CancelledError (cancelled=True) and stays
+                # silent — the new run, or the shutdown sweep, owns the valve.
+                if not cancelled:
+                    if not closed:
+                        # The valve did not close: the most important alert of
+                        # all, whatever the reason we were closing for.
+                        await _async_notify_interruption(
+                            hass, switch_entity, "close_failed", delivered, liters
+                        )
+                    elif interrupt_reason is not None:
+                        await _async_notify_interruption(
+                            hass, switch_entity, interrupt_reason, delivered, liters
+                        )
 
     async def _handle_seconds(call: ServiceCall) -> None:
         switch_entity: str = call.data[ATTR_SWITCH_ENTITY]

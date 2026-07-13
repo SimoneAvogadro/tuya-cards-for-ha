@@ -64,7 +64,7 @@ Config-flow-only, singleton entry. Enabled from Settings → Devices & Services 
 Registered in `_async_register_services` (called from `async_setup_entry`):
 
 - `tuya_irrigation.irrigation_by_seconds(switch_entity, seconds)` — turn on, `asyncio.sleep(seconds)`, turn off. Cancellation-safe via per-switch task registry.
-- `tuya_irrigation.irrigation_by_liters(switch_entity, liters, timeout_seconds?)` — turn on, monitor `sensor.<prefix>_summation_delivered` via `async_track_state_change_event`, turn off when target reached or timeout.
+- `tuya_irrigation.irrigation_by_liters(switch_entity, liters, timeout_seconds?)` — turn on, monitor `sensor.<prefix>_summation_delivered` via `async_track_state_change_event`, turn off when the target volume is delivered. Two safety nets bound a run that never reaches target: a **stall watchdog** (reason `stalled`, closes after ~`LITERS_STALL_WINDOW_S` of no measured flow) and an **adaptive cap** that samples the flow rate over the first `LITERS_SAMPLE_WINDOW_S` and *tightens* the max runtime toward the estimate — bounded above by `timeout_seconds` (the ceiling, default 3600 s) and `LITERS_HARD_GUARD_S` (absolute backstop); `timeout_seconds` is a **maximum**, never extended. An anomalous close (stall / cap) or a failed valve close raises a `persistent_notification`; an **external** close (card stop button, physical button, native auto-off) ends the monitor silently with no alert.
 
 Both services cancel any previously-running task on the same switch. The cancelled task checks `active_tasks[switch] is my_task` in its `finally` before touching the valve, so the cancellation does not disturb the new task.
 

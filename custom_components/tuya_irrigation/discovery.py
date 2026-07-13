@@ -77,3 +77,19 @@ def valve_switch_for_device(hass: HomeAssistant, device_id: str) -> str | None:
 def device_is_valve(hass: HomeAssistant, device_id: str) -> bool:
     """Whether a given device_id qualifies as an irrigation valve."""
     return device_id in find_valve_devices(hass)
+
+
+@callback
+def device_has_battery(hass: HomeAssistant, device_id: str) -> bool:
+    """Whether a device exposes a battery sensor (i.e. is battery-powered).
+
+    Used to scope keep-alive polling to sleepy battery valves: mains-powered
+    valves are kept available by ZHA's own polling and don't need it.
+    """
+    ent_reg = er.async_get(hass)
+    for entry in er.async_entries_for_device(
+        ent_reg, device_id, include_disabled_entities=True
+    ):
+        if entry.domain == "sensor" and _device_class_of(hass, entry) == "battery":
+            return True
+    return False

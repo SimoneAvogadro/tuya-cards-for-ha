@@ -93,6 +93,12 @@ You'll see one `Shutdown safety: closing open irrigation valve <entity>` WARNING
 
 > A mid-irrigation restart does **not** resume: the run is lost and water stops. This is the safe default — leaving a valve open across a restart with nothing watching the timer would be far worse. Plan long runs around maintenance windows, or trigger them from automations you can simply re-run. This does **not** cover a hard power loss (kernel panic, pulled plug with no UPS) where HA can't run any cleanup; a UPS + OS graceful shutdown is what saves you there.
 
+### Keep-alive (weak-signal battery valves)
+
+Battery valves like the GiEX QT06 are sleepy Zigbee end devices. In a spot with a weak link their spontaneous reports stop reaching the coordinator, and ZHA marks them **unavailable** after `consider_unavailable_battery` (6 h default) even though the valve still works — while the Tuya gateway keeps showing them online.
+
+To prevent this, the integration periodically (once at startup, then every hour) pokes each **idle battery-powered** valve (any detected valve that exposes a battery sensor) with `homeassistant.update_entity`, forcing a network read whose reply refreshes ZHA's *last seen* so the device stays online. Mains-powered valves are left alone — ZHA polls those itself. Valves with a run in progress are skipped (they're already communicating). It's best-effort and fully guarded; no configuration needed. If the link is so weak that nothing gets through for 6 h, the keep-alive can't help either — add a mains-powered Zigbee router near the valve, or raise the device's *consider unavailable* timeout in ZHA.
+
 ---
 
 ## Irrigation history

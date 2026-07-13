@@ -47,6 +47,18 @@ LITERS_CHECK_INTERVAL_S = 5  # monitoring loop tick (s) — bounds close latency
 # Entity suffix used to discover the water-delivered counter sensor from a switch entity_id.
 SUMMATION_SUFFIX = "_summation_delivered"
 
+# ── Keep-alive ──
+# Battery valves (e.g. GiEX QT06) are sleepy Zigbee end devices: on a weak link
+# their spontaneous reports stop reaching the coordinator and ZHA marks them
+# 'unavailable' after consider_unavailable_battery (6 h default), even though the
+# valve still works. We periodically poke each idle valve switch with
+# homeassistant.update_entity, which forces a network read whose reply refreshes
+# ZHA's last_seen — keeping the device online. 1 h gives 6 attempts per 6 h
+# window (any received frame, spontaneous or poked, resets it) — comfortable
+# margin, at a negligible battery cost. Drop toward 30 min if a weak-link valve
+# starts going unavailable again (fewer attempts = thinner margin).
+KEEPALIVE_INTERVAL_S = 3600
+
 # A device qualifies as an irrigation valve if it has a switch entity AND a
 # sensor entity whose device_class is one of these (water volume meter).
 VALVE_VOLUME_DEVICE_CLASSES = frozenset({"volume", "water"})

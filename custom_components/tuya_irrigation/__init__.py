@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from pathlib import Path
 
 import voluptuous as vol
@@ -23,7 +24,11 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
+from homeassistant.helpers.start import async_at_started
 from homeassistant.setup import async_when_setup
 
 from .const import (
@@ -34,6 +39,7 @@ from .const import (
     DEFAULT_LITERS_TIMEOUT,
     DOMAIN,
     JSMODULES,
+    KEEPALIVE_INTERVAL_S,
     LITERS_CHECK_INTERVAL_S,
     LITERS_ESTIMATE_MARGIN,
     LITERS_HARD_GUARD_S,
@@ -51,6 +57,11 @@ from .const import (
 # registry. Needs to happen at module load time so ZHA picks them up before
 # enumerating devices.
 from . import quirks  # noqa: F401, E402
+from .discovery import (
+    device_has_battery,
+    find_valve_devices,
+    valve_switch_for_device,
+)
 from .history import IrrigationRunLog
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,6 +70,10 @@ _LOGGER = logging.getLogger(__name__)
 # Tuya MCU applies the pushed time before it stamps irrigation_start_time. The
 # 0x24 time command is fire-and-forget (no ack), hence a fixed settle delay.
 _TIME_SYNC_SETTLE = 1.5
+
+# Seconds to pause between consecutive valve pokes in a keep-alive sweep, so we
+# don't burst the Zigbee network when several valves are configured.
+_KEEPALIVE_STAGGER = 2.0
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
@@ -119,6 +134,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop)
+    )
+
+    # Periodic keep-alive: poke idle valve switches so ZHA doesn't mark sleepy
+    # battery valves 'unavailable' when their link is weak. One sweep as soon as
+    # HA is started (async_track_time_interval's first fire is a full interval
+    # out — without this, a valve already near ZHA's 6 h threshold after a
+    # restart could go unavailable before the first poke), then one per
+    # interval. Both auto-cancelled on unload via async_on_unload.
+    async def _async_keepalive(*_) -> None:
+        # Single arg ignored: `now` from the interval, `hass` from at_started.
+        await _async_run_keepalive(hass, active_tasks)
+
+    entry.async_on_unload(async_at_started(hass, _async_keepalive))
+    entry.async_on_unload(
+        async_track_time_interval(
+            hass, _async_keepalive, timedelta(seconds=KEEPALIVE_INTERVAL_S)
+        )
     )
     _LOGGER.info("Tuya Irrigation v%s integration loaded", VERSION)
     return True
@@ -330,6 +362,77 @@ async def _async_push_device_time(hass: HomeAssistant, switch_entity: str) -> No
         _LOGGER.info("Pushed device time to %s (ieee %s)", switch_entity, ieee_str)
     except Exception as err:  # noqa: BLE001 - best-effort, never block irrigation
         _LOGGER.warning("Time push to %s failed (non-fatal): %s", switch_entity, err)
+
+
+async def _async_keepalive_poll(hass: HomeAssistant, switch_entity: str) -> None:
+    """Best-effort: poke a valve switch so ZHA refreshes its 'last seen'.
+
+    Battery valves (e.g. GiEX QT06) are sleepy Zigbee end devices: on a weak link
+    their spontaneous reports stop reaching the coordinator and ZHA marks them
+    'unavailable' after consider_unavailable_battery (6 h default), even though the
+    valve still works. homeassistant.update_entity on the *switch* forces a network
+    read of its On/Off cluster; the device's reply refreshes ZHA's last_seen and
+    keeps it online. Verified on a live GiEX QT06: the switch's last_reported
+    advances on each call (an update_entity on the battery sensor is a no-op).
+
+    Fully guarded: any failure is logged and swallowed — keep-alive must never raise.
+    """
+    try:
+        # blocking=True so the call spans the actual entity update: failures
+        # surface here (instead of a detached HA task) and the caller's stagger
+        # paces the real network reads, not just their scheduling.
+        await hass.services.async_call(
+            "homeassistant",
+            "update_entity",
+            {"entity_id": switch_entity},
+            blocking=True,
+        )
+        _LOGGER.debug("Keep-alive poll sent to %s", switch_entity)
+    except Exception as err:  # noqa: BLE001 - best-effort, never raise
+        _LOGGER.debug(
+            "Keep-alive poll to %s failed (non-fatal): %s", switch_entity, err
+        )
+
+
+async def _async_run_keepalive(
+    hass: HomeAssistant, active_tasks: dict[str, asyncio.Task]
+) -> None:
+    """Poke every discovered idle battery valve switch to keep it online in ZHA.
+
+    Uses discovery (not managed_switches) so valves that have never been driven
+    this session are covered too. Scoped to **battery** valves only — mains-powered
+    valves are kept available by ZHA's own polling, so poking them is pointless.
+    Skips valves with a run in progress (integration-driven via active_tasks OR
+    any-origin via run_log.is_running — physical button, automation, bare
+    switch.turn_on) — those are already communicating.
+
+    Fully guarded: the sweep must never leak an exception into the time-interval
+    callback, and it bails out if the integration is unloaded mid-sweep.
+    """
+    try:
+        first = True
+        for device_id in find_valve_devices(hass):
+            data = hass.data.get(DOMAIN)
+            if data is None:
+                return  # integration unloaded mid-sweep — stop poking
+            if not device_has_battery(hass, device_id):
+                continue
+            switch_entity = valve_switch_for_device(hass, device_id)
+            if switch_entity is None:
+                continue
+            run_log = data.get("run_log")
+            if switch_entity in active_tasks or (
+                run_log is not None and run_log.is_running(switch_entity)
+            ):
+                continue
+            if not first:
+                # Stagger only BETWEEN pokes, so we don't burst the Zigbee
+                # network — no pointless tail sleep after the last valve.
+                await asyncio.sleep(_KEEPALIVE_STAGGER)
+            first = False
+            await _async_keepalive_poll(hass, switch_entity)
+    except Exception as err:  # noqa: BLE001 - best-effort, never raise
+        _LOGGER.warning("Keep-alive sweep failed (non-fatal): %s", err)
 
 
 async def _async_push_run_plan(

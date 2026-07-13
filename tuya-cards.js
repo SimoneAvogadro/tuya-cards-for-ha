@@ -90,7 +90,7 @@ const I18N = {
     lastIrrigation: "Ultima irrigazione", duration: "Durata",
     start: "Inizio", end: "Fine", noRecent: "Nessuna irrigazione recente", none: "nessuna",
     history: "Storico", noHistory: "Nessuna corsa registrata",
-    oc_completed: "Completata", oc_stopped: "Interrotta", oc_timeout: "Timeout", oc_shutdown: "Riavvio", oc_auto: "Auto", oc_manual: "Manuale",
+    oc_completed: "Completata", oc_stopped: "Interrotta", oc_timeout: "Timeout", oc_stalled: "Nessun flusso", oc_shutdown: "Riavvio", oc_auto: "Auto", oc_manual: "Manuale",
     now: "adesso", minAgo: "${m} min fa", hoursAgo: "${h}h ${m}m fa",
     atSep: " alle ", today: "oggi",
     editorDevice: "Dispositivo irrigazione", editorSelect: "— Seleziona —",
@@ -117,7 +117,7 @@ const I18N = {
     lastIrrigation: "Last irrigation", duration: "Duration",
     start: "Start", end: "End", noRecent: "No recent irrigation", none: "none",
     history: "History", noHistory: "No runs recorded",
-    oc_completed: "Completed", oc_stopped: "Stopped", oc_timeout: "Timeout", oc_shutdown: "Restart", oc_auto: "Auto", oc_manual: "Manual",
+    oc_completed: "Completed", oc_stopped: "Stopped", oc_timeout: "Timeout", oc_stalled: "No flow", oc_shutdown: "Restart", oc_auto: "Auto", oc_manual: "Manual",
     now: "just now", minAgo: "${m} min ago", hoursAgo: "${h}h ${m}m ago",
     atSep: " at ", today: "today",
     editorDevice: "Irrigation device", editorSelect: "— Select —",
@@ -144,7 +144,7 @@ const I18N = {
     lastIrrigation: "上次灌溉", duration: "持续时间",
     start: "开始", end: "结束", noRecent: "无近期灌溉记录", none: "无",
     history: "历史", noHistory: "无记录",
-    oc_completed: "已完成", oc_stopped: "已停止", oc_timeout: "超时", oc_shutdown: "重启", oc_auto: "自动", oc_manual: "手动",
+    oc_completed: "已完成", oc_stopped: "已停止", oc_timeout: "超时", oc_stalled: "无水流", oc_shutdown: "重启", oc_auto: "自动", oc_manual: "手动",
     now: "刚刚", minAgo: "${m}分钟前", hoursAgo: "${h}小时${m}分钟前",
     atSep: " ", today: "今天",
     editorDevice: "灌溉设备", editorSelect: "— 选择 —",
@@ -734,10 +734,16 @@ class IrrigationControlCard extends HTMLElement {
     return Array.isArray(runs) ? runs : [];
   }
 
-  // View model for the "last irrigation" summary (level 1). During a live run it
-  // is the device's live DPs (so the volume ticks up in real time, as before);
-  // when idle it prefers the reliable persisted history record (which survives a
-  // restart and isn't 24h-gated), falling back to the device DPs.
+  // View model for the "last irrigation" summary (level 1). Volume/duration tick
+  // from the device DPs while a run is live (real-time monitoring); the absolute
+  // wall-clock times, however, are NEVER taken from the device start/end_time DPs:
+  // the GiEX RTC free-runs on UTC (hours off from local) and the MCU time-push
+  // doesn't reliably correct it, so those DPs are right as a *duration delta*
+  // (they drive the progress bar) but wrong as an absolute clock. Absolute times
+  // are sourced, in order: the live switch-on transition (server time), the
+  // finalized run-log record (dt_util timestamps, tz-correct, restart-proof), and
+  // — only when no run-log exists at all (older integration / history sensor
+  // absent) — the device DP as a last resort so the panel still shows something.
   _histVM() {
     const e = this._entities;
     const running = this._isOn();
@@ -745,27 +751,42 @@ class IrrigationControlCard extends HTMLElement {
     const lastRec = runs[0] || null;
     let vol = this._nv(e.summation);
     let dur = this._nv(e.last_duration);
-    let whenDate = this._tsDate(e.start_time);
-    let startISO = this._sv(e.start_time), endISO = this._sv(e.end_time);
-    const deviceFresh = this._ago(whenDate) !== null;
-    if (!running && !deviceFresh && lastRec) {
+    let whenDate = null, startISO = null, endISO = null;
+    if (running) {
+      // Live run: start = the moment HA saw the switch turn on (server truth).
+      const sw = this._hass?.states[e.switch];
+      const onISO = (sw && sw.state === "on") ? sw.last_changed : null;
+      whenDate = onISO ? new Date(onISO) : this._tsDate(e.start_time);
+      startISO = onISO || this._sv(e.start_time);
+      // Projected end (tempo): the device end-start delta is tz-shift-invariant,
+      // so add it to the true server start. Liters has no fixed end → left blank.
+      const ds = this._tsDate(e.start_time), de = this._tsDate(e.end_time);
+      if (whenDate && ds && de && de.getTime() > ds.getTime()) {
+        endISO = new Date(whenDate.getTime() + (de.getTime() - ds.getTime())).toISOString();
+      }
+    } else if (lastRec) {
+      // Idle: the finalized run-log record is the system of record.
       vol = (lastRec.liters != null) ? lastRec.liters : 0;
       dur = (lastRec.duration_s != null) ? lastRec.duration_s : 0;
       whenDate = lastRec.start ? new Date(lastRec.start) : null;
       startISO = lastRec.start || null; endISO = lastRec.end || null;
+    } else {
+      // No run-log at all → fall back to the (possibly tz-shifted) device DPs.
+      whenDate = this._tsDate(e.start_time);
+      startISO = this._sv(e.start_time); endISO = this._sv(e.end_time);
     }
-    const hasData = deviceFresh || (!running && !!lastRec);
+    const hasData = running || !!lastRec || (whenDate != null && this._ago(whenDate) !== null);
     return { running, hasHist: runs.length > 0, vol, dur, whenDate, startISO, endISO, hasData };
   }
 
   _outcomeClass(r) {
     const reason = r && r.reason;
     if (reason === "completed") return "ok";
-    if (reason === "timeout" || reason === "shutdown") return "warn";
+    if (reason === "timeout" || reason === "stalled" || reason === "shutdown") return "warn";
     return "neutral";
   }
   _outcomeLabel(r) {
-    const map = { completed: "oc_completed", stopped: "oc_stopped", timeout: "oc_timeout", shutdown: "oc_shutdown", auto_off: "oc_auto", manual_off: "oc_manual" };
+    const map = { completed: "oc_completed", stopped: "oc_stopped", timeout: "oc_timeout", stalled: "oc_stalled", shutdown: "oc_shutdown", auto_off: "oc_auto", manual_off: "oc_manual" };
     return _t(this._hass, map[r && r.reason] || "oc_completed");
   }
 

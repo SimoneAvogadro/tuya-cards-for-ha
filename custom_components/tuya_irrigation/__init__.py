@@ -316,6 +316,45 @@ async def _async_register_lovelace_resource(
             )
 
 
+def _resolve_zha_device(hass: HomeAssistant, switch_entity: str):
+    """Resolve a valve switch entity to its zha-lib device object, or None.
+
+    Walks entity registry → device registry → Zigbee IEEE → ZHA gateway.
+    Imports lazily so the integration keeps loading when ZHA is absent; a
+    missing link returns None with a debug log, anything unexpected raises
+    (callers wrap in their own best-effort guard).
+    """
+    from homeassistant.components.zha.helpers import get_zha_gateway
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
+    from zigpy.types import EUI64
+
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get(switch_entity)
+    if entry is None or entry.device_id is None:
+        _LOGGER.debug("ZHA resolve: no registry entry for %s", switch_entity)
+        return None
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get(entry.device_id)
+    if device is None:
+        _LOGGER.debug("ZHA resolve: no device for %s", switch_entity)
+        return None
+    ieee_str = next(
+        (c[1] for c in device.connections if c[0] == dr.CONNECTION_ZIGBEE),
+        None,
+    )
+    if ieee_str is None:
+        ieee_str = next(
+            (i[1] for i in device.identifiers if i[0] == "zha"), None
+        )
+    if ieee_str is None:
+        _LOGGER.debug("ZHA resolve: no IEEE for %s", switch_entity)
+        return None
+
+    gateway = get_zha_gateway(hass)
+    return gateway.get_device(EUI64.convert(ieee_str))
+
+
 async def _async_push_device_time(hass: HomeAssistant, switch_entity: str) -> None:
     """Best-effort: push the current time to a Tuya valve's MCU before opening it.
 
@@ -328,69 +367,45 @@ async def _async_push_device_time(hass: HomeAssistant, switch_entity: str) -> No
     logged and swallowed — pushing the time must never block or fail irrigation.
     """
     try:
-        from homeassistant.components.zha.helpers import get_zha_gateway
-        from homeassistant.helpers import device_registry as dr
-        from homeassistant.helpers import entity_registry as er
-        from zigpy.types import EUI64
-
-        ent_reg = er.async_get(hass)
-        entry = ent_reg.async_get(switch_entity)
-        if entry is None or entry.device_id is None:
-            _LOGGER.debug("Time push: no registry entry for %s", switch_entity)
+        zha_device = _resolve_zha_device(hass, switch_entity)
+        if zha_device is None:
             return
-        dev_reg = dr.async_get(hass)
-        device = dev_reg.async_get(entry.device_id)
-        if device is None:
-            _LOGGER.debug("Time push: no device for %s", switch_entity)
-            return
-        ieee_str = next(
-            (c[1] for c in device.connections if c[0] == dr.CONNECTION_ZIGBEE),
-            None,
-        )
-        if ieee_str is None:
-            ieee_str = next(
-                (i[1] for i in device.identifiers if i[0] == "zha"), None
-            )
-        if ieee_str is None:
-            _LOGGER.debug("Time push: no IEEE for %s", switch_entity)
-            return
-
-        gateway = get_zha_gateway(hass)
-        zha_device = gateway.get_device(EUI64.convert(ieee_str))
         cluster = zha_device.device.endpoints[1].in_clusters[0xEF00]
         cluster.handle_set_time_request(0)
-        _LOGGER.info("Pushed device time to %s (ieee %s)", switch_entity, ieee_str)
+        _LOGGER.info(
+            "Pushed device time to %s (ieee %s)", switch_entity, zha_device.ieee
+        )
     except Exception as err:  # noqa: BLE001 - best-effort, never block irrigation
         _LOGGER.warning("Time push to %s failed (non-fatal): %s", switch_entity, err)
 
 
 async def _async_keepalive_poll(hass: HomeAssistant, switch_entity: str) -> None:
-    """Best-effort: poke a valve switch so ZHA refreshes its 'last seen'.
+    """Best-effort: read a real attribute off the valve so ZHA refreshes 'last seen'.
 
     Battery valves (e.g. GiEX QT06) are sleepy Zigbee end devices: on a weak link
     their spontaneous reports stop reaching the coordinator and ZHA marks them
-    'unavailable' after consider_unavailable_battery (6 h default), even though the
-    valve still works. homeassistant.update_entity on the *switch* forces a network
-    read of its On/Off cluster; the device's reply refreshes ZHA's last_seen and
-    keeps it online. Verified on a live GiEX QT06: the switch's last_reported
-    advances on each call (an update_entity on the battery sensor is a no-op).
+    'unavailable' after consider_unavailable_battery (6 h default), even though
+    the valve still works. An entity-level poll (homeassistant.update_entity on
+    the switch) does NOT reach the radio here: the quirk's On/Off cluster is a
+    LocalDataCluster answered from cache (verified live — no frame is emitted).
+    So we read the Basic cluster (0x0000, untouched by the quirk) at the zigpy
+    level with allow_cache=False — a genuine over-the-air read, the same shape
+    ZHA's own availability pings use. ANY reply, even an unsupported-attribute
+    status, is a received frame and refreshes last_seen. zigpy already applies
+    its extended timeout for sleepy end devices, so no extra wait is needed.
 
     Fully guarded: any failure is logged and swallowed — keep-alive must never raise.
     """
     try:
-        # blocking=True so the call spans the actual entity update: failures
-        # surface here (instead of a detached HA task) and the caller's stagger
-        # paces the real network reads, not just their scheduling.
-        await hass.services.async_call(
-            "homeassistant",
-            "update_entity",
-            {"entity_id": switch_entity},
-            blocking=True,
-        )
-        _LOGGER.debug("Keep-alive poll sent to %s", switch_entity)
+        zha_device = _resolve_zha_device(hass, switch_entity)
+        if zha_device is None:
+            return
+        basic = zha_device.device.endpoints[1].in_clusters[0x0000]
+        await basic.read_attributes(["app_version"], allow_cache=False)
+        _LOGGER.debug("Keep-alive read ok for %s", switch_entity)
     except Exception as err:  # noqa: BLE001 - best-effort, never raise
         _LOGGER.debug(
-            "Keep-alive poll to %s failed (non-fatal): %s", switch_entity, err
+            "Keep-alive read to %s failed (non-fatal): %s", switch_entity, err
         )
 
 

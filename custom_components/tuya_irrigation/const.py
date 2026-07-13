@@ -51,9 +51,10 @@ SUMMATION_SUFFIX = "_summation_delivered"
 # Battery valves (e.g. GiEX QT06) are sleepy Zigbee end devices: on a weak link
 # their spontaneous reports stop reaching the coordinator and ZHA marks them
 # 'unavailable' after consider_unavailable_battery (6 h default), even though the
-# valve still works. We periodically poke each idle valve switch with
-# homeassistant.update_entity, which forces a network read whose reply refreshes
-# ZHA's last_seen — keeping the device online. 1 h gives 6 attempts per 6 h
+# valve still works. We periodically read a Basic-cluster attribute off each idle
+# battery valve at the zigpy level (over the air — entity-level polling only hits
+# the quirk's local cache); the reply refreshes ZHA's last_seen, keeping the
+# device online. 1 h gives 6 attempts per 6 h
 # window (any received frame, spontaneous or poked, resets it) — comfortable
 # margin, at a negligible battery cost. Drop toward 30 min if a weak-link valve
 # starts going unavailable again (fewer attempts = thinner margin).

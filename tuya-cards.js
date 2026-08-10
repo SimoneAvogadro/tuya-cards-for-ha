@@ -9,6 +9,10 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.7.1 — Compact "last irrigation" line: the label is now just "Ultima" /
+ *          "Last" / "上次". The full wording overflowed to two lines with a
+ *          large mobile font, and the short form matches the Sonoff valve
+ *          card. The expanded panel keeps the full title.
  * v2.6.0 — Irrigation history. A nested second "+" inside the expanded "last
  *          irrigation" view reveals a scrollable list of past runs (when /
  *          duration / liters / outcome), read from the integration's new
@@ -87,7 +91,7 @@ const I18N = {
     dispenseFor: "Eroga per:", liters: "Litri", time: "Tempo", manual: "Manuale",
     remaining: "rimanente",
     repeats: "Ripetizioni", cycles: "Cicli", cycleInterval: "Intervallo cicli",
-    lastIrrigation: "Ultima irrigazione", duration: "Durata",
+    lastIrrigation: "Ultima irrigazione", last: "Ultima", duration: "Durata",
     start: "Inizio", end: "Fine", noRecent: "Nessuna irrigazione recente", none: "nessuna",
     history: "Storico", noHistory: "Nessuna corsa registrata",
     oc_completed: "Completata", oc_stopped: "Interrotta", oc_timeout: "Timeout", oc_stalled: "Nessun flusso", oc_shutdown: "Riavvio", oc_auto: "Auto", oc_manual: "Manuale",
@@ -114,7 +118,7 @@ const I18N = {
     dispenseFor: "Dispense for:", liters: "Liters", time: "Time", manual: "Manual",
     remaining: "remaining",
     repeats: "Repeats", cycles: "Cycles", cycleInterval: "Cycle interval",
-    lastIrrigation: "Last irrigation", duration: "Duration",
+    lastIrrigation: "Last irrigation", last: "Last", duration: "Duration",
     start: "Start", end: "End", noRecent: "No recent irrigation", none: "none",
     history: "History", noHistory: "No runs recorded",
     oc_completed: "Completed", oc_stopped: "Stopped", oc_timeout: "Timeout", oc_stalled: "No flow", oc_shutdown: "Restart", oc_auto: "Auto", oc_manual: "Manual",
@@ -141,7 +145,7 @@ const I18N = {
     dispenseFor: "灌溉方式：", liters: "升量", time: "时长", manual: "手动",
     remaining: "剩余",
     repeats: "重复", cycles: "循环次数", cycleInterval: "循环间隔",
-    lastIrrigation: "上次灌溉", duration: "持续时间",
+    lastIrrigation: "上次灌溉", last: "上次", duration: "持续时间",
     start: "开始", end: "结束", noRecent: "无近期灌溉记录", none: "无",
     history: "历史", noHistory: "无记录",
     oc_completed: "已完成", oc_stopped: "已停止", oc_timeout: "超时", oc_stalled: "无水流", oc_shutdown: "重启", oc_auto: "自动", oc_manual: "手动",
@@ -1029,7 +1033,7 @@ input[type=number]{-moz-appearance:textfield}
     <div class="dv ${modeOpen?"vi":""}" id="divider"></div>
     <div class="sc" style="margin-bottom:0">
       <div class="hist-compact" id="hist-compact" style="display:${this._histExpanded&&hasData?"none":"flex"}">
-        <span class="hist-compact-label">${t("lastIrrigation")}</span>
+        <span class="hist-compact-label">${t("last")}</span>
         <span class="hist-when ${hasData?"":"none"}" id="hist-when">${hasData?(smart||""):": "+t("none")}</span>
         <span class="hist-vol" id="hist-vol" style="display:${hasData?"inline":"none"}"><span class="hist-vol-label">${t("liters")}:</span> <span id="hist-vol-val">${this._fmtVolShortNum(vol)}</span></span>
         <button class="exp-btn" id="hexp-compact" style="display:${hasData?"flex":"none"}">+</button>
@@ -1281,7 +1285,7 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.6.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.7.1 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
 // --- soil-moisture-card.js ---
 /**
  * Soil Moisture Card for Home Assistant

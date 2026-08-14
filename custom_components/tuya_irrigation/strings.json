@@ -12,8 +12,8 @@
   },
   "device_automation": {
     "action_type": {
-      "irrigate_liters": "Irrigate by liters",
-      "irrigate_seconds": "Irrigate for a duration"
+      "irrigate_liters": "Liters🪣💧 (🌱irrigate by volume)",
+      "irrigate_seconds": "Duration⏰💧 (🌱irrigate by time)"
     },
     "extra_fields": {
       "liters": "Liters",
@@ -32,6 +32,40 @@
       },
       "irrigation_water_total": {
         "name": "Irrigation water total"
+      }
+    }
+  },
+  "services": {
+    "irrigation_by_seconds": {
+      "name": "Seconds⏰💧 (🌱timed irrigation)",
+      "description": "Time: opens the valve, waits N seconds, then closes it. The timer runs server-side inside Home Assistant, so it works regardless of the valve firmware's own auto-off behaviour (useful for devices such as the Tuya _TZE200_a7sghmms whose native duration timer is unreliable under ZHA).",
+      "fields": {
+        "switch_entity": {
+          "name": "Valve",
+          "description": "The switch entity that controls the irrigation valve."
+        },
+        "seconds": {
+          "name": "Seconds",
+          "description": "How long to keep the valve open, in seconds."
+        }
+      }
+    },
+    "irrigation_by_liters": {
+      "name": "Liters🪣💧 (🌱volume irrigation)",
+      "description": "Volume: opens the valve, monitors the device's _summation_delivered sensor and closes the valve when the configured volume has been delivered. Two safety nets bound a run that never reaches its target: a stall watchdog closes the valve if no water is measured for ~5 minutes, and an adaptive cap tightens the maximum runtime toward the measured flow rate (never beyond the safety timeout below).",
+      "fields": {
+        "switch_entity": {
+          "name": "Valve",
+          "description": "The switch entity that controls the irrigation valve."
+        },
+        "liters": {
+          "name": "Liters",
+          "description": "Target volume to deliver, in liters."
+        },
+        "timeout_seconds": {
+          "name": "Safety timeout (max run time)",
+          "description": "Maximum time the valve may stay open before it is forcibly closed, whether or not the target volume is reached. The adaptive cap only tightens this downward — closing sooner when the sampled flow rate says the run should already be done — never later. A stalled flow still closes the valve within ~5 minutes regardless. Defaults to 3600 (1 hour)."
+        }
       }
     }
   }

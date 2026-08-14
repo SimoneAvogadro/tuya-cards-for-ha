@@ -1,0 +1,6 @@
+{
+  "services": {
+    "irrigation_by_liters": { "service": "mdi:bucket-outline" },
+    "irrigation_by_seconds": { "service": "mdi:clock-outline" }
+  }
+}

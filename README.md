@@ -21,7 +21,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves + bundled ZHA quirks | v2.7.0 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves + bundled ZHA quirks | v2.8.0 |
 | `irrigation-control-card` | Lovelace card driving the services above | v2.6.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
@@ -134,8 +134,8 @@ When you build an automation by **selecting a device first**, any recognized irr
 
 | Action | Field | Calls |
 | --- | --- | --- |
-| **Irriga per litri** / *Irrigate by liters* | Liters | `irrigation_by_liters` (adaptive safety cap, 3600 s max) |
-| **Irriga per tempo** / *Irrigate for a duration* | Duration (hh:mm:ss) | `irrigation_by_seconds` |
+| **Litri🪣💧 (🌱irriga a volume)** / *Liters🪣💧 (🌱irrigate by volume)* | Liters | `irrigation_by_liters` (adaptive safety cap, 3600 s max) |
+| **Durata⏰💧 (🌱irriga a tempo)** / *Duration⏰💧 (🌱irrigate by time)* | Duration (hh:mm:ss) | `irrigation_by_seconds` |
 
 **Valve auto-detection:** a device qualifies when it has both a `switch.*` entity and a `sensor.*` entity with `device_class` `volume` or `water` (energy-metering sockets are ignored). Each detected valve also gets an **"Irrigazione in corso" / "Irrigating"** `binary_sensor`, `on` while a server-side run is active — this association is what surfaces the device actions and gives live feedback.
 

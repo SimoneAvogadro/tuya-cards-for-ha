@@ -12,8 +12,8 @@
   },
   "device_automation": {
     "action_type": {
-      "irrigate_liters": "Irriga per litri",
-      "irrigate_seconds": "Irriga per tempo"
+      "irrigate_liters": "Litri🪣💧 (🌱irriga a volume)",
+      "irrigate_seconds": "Durata⏰💧 (🌱irriga a tempo)"
     },
     "extra_fields": {
       "liters": "Litri",
@@ -32,6 +32,40 @@
       },
       "irrigation_water_total": {
         "name": "Acqua totale irrigazione"
+      }
+    }
+  },
+  "services": {
+    "irrigation_by_seconds": {
+      "name": "Secondi⏰💧 (🌱irrigazione a tempo)",
+      "description": "Tempo: apre la valvola, attende N secondi, poi la chiude. Il timer gira lato server dentro Home Assistant, quindi funziona a prescindere dall'auto-spegnimento del firmware della valvola (utile per dispositivi come il Tuya _TZE200_a7sghmms, il cui timer nativo e' inaffidabile sotto ZHA).",
+      "fields": {
+        "switch_entity": {
+          "name": "Valvola",
+          "description": "L'entita' switch che comanda la valvola di irrigazione."
+        },
+        "seconds": {
+          "name": "Secondi",
+          "description": "Per quanto tenere aperta la valvola, in secondi."
+        }
+      }
+    },
+    "irrigation_by_liters": {
+      "name": "Litri🪣💧 (🌱irrigazione a volume)",
+      "description": "Volume: apre la valvola, segue il sensore _summation_delivered del dispositivo e la chiude quando il volume richiesto e' stato erogato. Due reti di sicurezza limitano una corsa che non raggiunge mai il target: un watchdog chiude la valvola se non viene misurata acqua per ~5 minuti, e un limite adattivo stringe la durata massima verso la portata misurata (mai oltre il timeout di sicurezza qui sotto).",
+      "fields": {
+        "switch_entity": {
+          "name": "Valvola",
+          "description": "L'entita' switch che comanda la valvola di irrigazione."
+        },
+        "liters": {
+          "name": "Litri",
+          "description": "Volume da erogare, in litri."
+        },
+        "timeout_seconds": {
+          "name": "Timeout di sicurezza (durata massima)",
+          "description": "Tempo massimo di apertura della valvola prima della chiusura forzata, che il volume richiesto sia stato raggiunto o meno. Il limite adattivo puo' solo stringerlo — chiudendo prima, quando la portata campionata dice che la corsa dovrebbe essere gia' finita — mai allungarlo. Una portata ferma chiude comunque la valvola entro ~5 minuti. Default 3600 (1 ora)."
+        }
       }
     }
   }

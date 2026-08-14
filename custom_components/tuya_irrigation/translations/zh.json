@@ -1,0 +1,72 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "设置 Tuya Irrigation",
+        "description": "点击提交以启用 Tuya Irrigation 集成。它会注册 `irrigation_by_seconds` 和 `irrigation_by_liters` 服务，并自动注册 Lovelace 卡片包。此处无需配置。"
+      }
+    },
+    "abort": {
+      "already_configured": "Tuya Irrigation 已配置。"
+    }
+  },
+  "device_automation": {
+    "action_type": {
+      "irrigate_liters": "升量🪣💧（🌱按水量灌溉）",
+      "irrigate_seconds": "时长⏰💧（🌱按时间灌溉）"
+    },
+    "extra_fields": {
+      "liters": "升量",
+      "duration": "时长"
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "irrigating": {
+        "name": "灌溉中"
+      }
+    },
+    "sensor": {
+      "irrigation_history": {
+        "name": "灌溉历史"
+      },
+      "irrigation_water_total": {
+        "name": "灌溉总水量"
+      }
+    }
+  },
+  "services": {
+    "irrigation_by_seconds": {
+      "name": "秒数⏰💧（🌱定时灌溉）",
+      "description": "定时：打开阀门，等待 N 秒后关闭。计时在 Home Assistant 服务端运行，因此不依赖阀门固件自带的自动关闭功能（适用于涂鸦 _TZE200_a7sghmms 等原生定时在 ZHA 下不可靠的设备）。",
+      "fields": {
+        "switch_entity": {
+          "name": "阀门",
+          "description": "控制灌溉阀门的开关实体。"
+        },
+        "seconds": {
+          "name": "秒数",
+          "description": "阀门保持打开的时长，单位为秒。"
+        }
+      }
+    },
+    "irrigation_by_liters": {
+      "name": "升量🪣💧（🌱定量灌溉）",
+      "description": "定量：打开阀门，监测设备的 _summation_delivered 传感器，并在达到设定水量后关闭阀门。两重保护限制无法达到目标的运行：无水流看门狗在约 5 分钟未测到水量时关闭阀门，自适应上限根据实测流量收紧最长运行时间（绝不超过下方的安全超时）。",
+      "fields": {
+        "switch_entity": {
+          "name": "阀门",
+          "description": "控制灌溉阀门的开关实体。"
+        },
+        "liters": {
+          "name": "升量",
+          "description": "目标出水量，单位为升。"
+        },
+        "timeout_seconds": {
+          "name": "安全超时（最长运行时间）",
+          "description": "阀门被强制关闭前允许保持打开的最长时间，无论是否达到目标水量。自适应上限只会将其收紧——当采样流量表明运行本应结束时提前关闭——绝不延长。水流停滞时仍会在约 5 分钟内关闭阀门。默认 3600（1 小时）。"
+        }
+      }
+    }
+  }
+}

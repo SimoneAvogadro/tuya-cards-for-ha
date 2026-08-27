@@ -21,8 +21,8 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves + bundled ZHA quirks | v2.8.1 |
-| `irrigation-control-card` | Lovelace card driving the services above | v2.6.0 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves + bundled ZHA quirks | v2.9.0 |
+| `irrigation-control-card` | Lovelace card driving the services above | v2.9.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.1.2 |
 
 ## Installation (HACS)
@@ -162,7 +162,7 @@ Compact card for the GiEX valve — replaces a handful of scattered entities wit
 
 - **Dual-mode manual irrigation**: by liters or by seconds, dispatched server-side.
 - **Device-truth progress bar**: derived from the device's own telemetry, not a client timer. Tempo uses `irrigation_end_time − irrigation_start_time`; Liters uses `summation_delivered / target`. Survives a browser refresh, stays in sync across tabs, never drifts, and shows progress even for automation-started runs.
-- **History**: the expanded "last irrigation" view (live while a run is in progress) nests a second **"+"** that opens a scrollable list of past runs (when / duration / liters / outcome), read from `sensor.<prefix>_irrigation_history`. See [Irrigation history](#irrigation-history).
+- **History**: the idle row shows the last run (start time, duration, liters) and a chevron that expands a scrollable list of past runs — start time, duration, liters and an outcome dot — read from `sensor.<prefix>_irrigation_history`. Same layout as the Sonoff valve card in [zha-sonoff-quirks](https://github.com/simoneavogadro/zha-sonoff-quirks). See [Irrigation history](#irrigation-history).
 - **Auto-discovery** from a single switch entity; **visual editor** lists only switches with all companion entities.
 - **Battery indicator**, **integration-missing banner**, **theme-aware** (HA CSS variables).
 

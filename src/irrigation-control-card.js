@@ -1,6 +1,12 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.9.0 — Run list unified with the Sonoff valve card: the "last irrigation"
+ *          detail panel (level 1) is gone, so the chevron on the compact row
+ *          now opens the run list directly — one expansion instead of two.
+ *          Rows keep a black background with a hairline separator, carry the
+ *          start time in a fixed-width tabular column (_smartDateTime), and the
+ *          compact row shows duration alongside liters. New i18n: yesterday.
  * v2.7.1 — Compact "last irrigation" line: the label is now just "Ultima" /
  *          "Last" / "上次". The full wording overflowed to two lines with a
  *          large mobile font, and the short form matches the Sonoff valve
@@ -83,12 +89,12 @@ const I18N = {
     dispenseFor: "Eroga per:", liters: "Litri", time: "Tempo", manual: "Manuale",
     remaining: "rimanente",
     repeats: "Ripetizioni", cycles: "Cicli", cycleInterval: "Intervallo cicli",
-    lastIrrigation: "Ultima irrigazione", last: "Ultima", duration: "Durata",
-    start: "Inizio", end: "Fine", noRecent: "Nessuna irrigazione recente", none: "nessuna",
+    last: "Ultima",
+    noRecent: "Nessuna irrigazione recente", none: "nessuna",
     history: "Storico", noHistory: "Nessuna corsa registrata",
     oc_completed: "Completata", oc_stopped: "Interrotta", oc_timeout: "Timeout", oc_stalled: "Nessun flusso", oc_shutdown: "Riavvio", oc_auto: "Auto", oc_manual: "Manuale",
     now: "adesso", minAgo: "${m} min fa", hoursAgo: "${h}h ${m}m fa",
-    atSep: " alle ", today: "oggi",
+    atSep: " alle ", today: "oggi", yesterday: "ieri",
     editorDevice: "Dispositivo irrigazione", editorSelect: "— Seleziona —",
     editorHint: "Mostra solo i dispositivi con tutte le entità irrigazione",
     editorNoDevice: "Nessun dispositivo irrigazione compatibile",
@@ -110,12 +116,12 @@ const I18N = {
     dispenseFor: "Dispense for:", liters: "Liters", time: "Time", manual: "Manual",
     remaining: "remaining",
     repeats: "Repeats", cycles: "Cycles", cycleInterval: "Cycle interval",
-    lastIrrigation: "Last irrigation", last: "Last", duration: "Duration",
-    start: "Start", end: "End", noRecent: "No recent irrigation", none: "none",
+    last: "Last",
+    noRecent: "No recent irrigation", none: "none",
     history: "History", noHistory: "No runs recorded",
     oc_completed: "Completed", oc_stopped: "Stopped", oc_timeout: "Timeout", oc_stalled: "No flow", oc_shutdown: "Restart", oc_auto: "Auto", oc_manual: "Manual",
     now: "just now", minAgo: "${m} min ago", hoursAgo: "${h}h ${m}m ago",
-    atSep: " at ", today: "today",
+    atSep: " at ", today: "today", yesterday: "yesterday",
     editorDevice: "Irrigation device", editorSelect: "— Select —",
     editorHint: "Shows only devices with all irrigation entities",
     editorNoDevice: "No compatible irrigation device found",
@@ -137,12 +143,12 @@ const I18N = {
     dispenseFor: "灌溉方式：", liters: "升量", time: "时长", manual: "手动",
     remaining: "剩余",
     repeats: "重复", cycles: "循环次数", cycleInterval: "循环间隔",
-    lastIrrigation: "上次灌溉", last: "上次", duration: "持续时间",
-    start: "开始", end: "结束", noRecent: "无近期灌溉记录", none: "无",
+    last: "上次",
+    noRecent: "无近期灌溉记录", none: "无",
     history: "历史", noHistory: "无记录",
     oc_completed: "已完成", oc_stopped: "已停止", oc_timeout: "超时", oc_stalled: "无水流", oc_shutdown: "重启", oc_auto: "自动", oc_manual: "手动",
     now: "刚刚", minAgo: "${m}分钟前", hoursAgo: "${h}小时${m}分钟前",
-    atSep: " ", today: "今天",
+    atSep: " ", today: "今天", yesterday: "昨天",
     editorDevice: "灌溉设备", editorSelect: "— 选择 —",
     editorHint: "仅显示具有所有灌溉实体的设备",
     editorNoDevice: "未找到兼容的灌溉设备",
@@ -345,8 +351,7 @@ class IrrigationControlCard extends HTMLElement {
     this._stopping = false; this._stopFailed = false; this._stopTimer = null;
     this._inputLitri = 1; this._inputMin = 0; this._inputSec = 0;
     this._userEditedLitri = false; this._userEditedTempo = false;
-    this._histExpanded = false;
-    this._histListExpanded = false;
+    this._histOpen = false;
     this._histListSig = "";
     this._domCreated = false;
     this._el = {};
@@ -693,9 +698,37 @@ class IrrigationControlCard extends HTMLElement {
     return cap(date.toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" }));
   }
   _fd(s) { s = Math.round(s); if (s < 60) return `${s} s`; const m = Math.floor(s / 60), r = s % 60; if (m < 60) return r > 0 ? `${m}m ${r}s` : `${m} min`; return `${Math.floor(m / 60)}h ${m % 60}m`; }
-  _fmtVol(v) {
-    const n = Number(v) || 0;
-    return n.toLocaleString(_numLocale(this._hass), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " L";
+  // Tabular date + start time for the run-list rows. Deliberately NOT _smartDate:
+  // that one's prose form ("Lunedì 24 alle 06:30") is right for the single
+  // prominent compact line but makes a scrollable list ragged, since the
+  // current week's rows come out ~2x wider than the rest. A fixed-width leading
+  // column scans as a column. Kept identical in the Sonoff valve card.
+  //   today            → "oggi 06:30"
+  //   yesterday        → "ieri 06:30"
+  //   older, same year → "24 ago 06:30"
+  //   previous years   → "24 ago 2024 06:30"
+  _smartDateTime(date) {
+    if (!date || isNaN(date.getTime())) return "";
+    const now = new Date();
+    const locale = this._hass?.language || _i18nLang(this._hass);
+    const time = date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+    // Calendar-day difference, not elapsed hours: 23:50 → 00:10 is "yesterday".
+    const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days = Math.round((dayStart(now) - dayStart(date)) / 86400000);
+    if (days === 0) return `${_t(this._hass, "today")} ${time}`;
+    if (days === 1) return `${_t(this._hass, "yesterday")} ${time}`;
+    const opts = date.getFullYear() === now.getFullYear()
+      ? { day: "numeric", month: "short" }
+      : { day: "numeric", month: "short", year: "numeric" };
+    return `${date.toLocaleDateString(locale, opts)} ${time}`;
+  }
+  // "17m 13s · 100 L" for the compact row. The "Litri:" label is gone: the unit
+  // already says it, and this line has to survive a large mobile font on one
+  // line. Either half may be missing (a duration run records no liters).
+  _summaryText(dur, vol) {
+    const d = (dur != null && dur > 0) ? this._fd(dur) : "";
+    const v = (vol != null) ? `${this._fmtVolShortNum(vol)} L` : "";
+    return d && v ? `${d} · ${v}` : (d || v);
   }
   _fmtVolShortNum(v) {
     const n = Number(v) || 0;
@@ -703,21 +736,8 @@ class IrrigationControlCard extends HTMLElement {
   }
   _p2(n) { return String(Math.round(n)).padStart(2, "0"); }
 
-  _fmtLocalTime(val) {
-    if (!val || val === "unavailable" || val === "unknown") return null;
-    try {
-      const d = new Date(val);
-      if (isNaN(d.getTime())) return null;
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    } catch { return null; }
-  }
-
   _toggleHist() {
-    this._histExpanded = !this._histExpanded;
-    this._render();
-  }
-  _toggleHistList() {
-    this._histListExpanded = !this._histListExpanded;
+    this._histOpen = !this._histOpen;
     this._render();
   }
 
@@ -760,6 +780,9 @@ class IrrigationControlCard extends HTMLElement {
       if (whenDate && ds && de && de.getTime() > ds.getTime()) {
         endISO = new Date(whenDate.getTime() + (de.getTime() - ds.getTime())).toISOString();
       }
+      // Elapsed so far, not last_duration: that DP still holds the PREVIOUS
+      // run's length, which would read as this run's next to its live volume.
+      if (whenDate) dur = Math.max(0, (Date.now() - whenDate.getTime()) / 1000);
     } else if (lastRec) {
       // Idle: the finalized run-log record is the system of record.
       vol = (lastRec.liters != null) ? lastRec.liters : 0;
@@ -786,11 +809,28 @@ class IrrigationControlCard extends HTMLElement {
     return _t(this._hass, map[r && r.reason] || "oc_completed");
   }
 
-  // Build the nested run list (level 2). Only builds when expanded; a signature
-  // guard avoids rebuilding the innerHTML on every 1s render tick.
+  // One run-list row. Same markup and column order as the Sonoff valve card,
+  // which inserts an extra .hl-ch cell for the line that ran.
+  _histRowHtml(r) {
+    const esc = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    // start is null on a run recovered across a restart — end still places it.
+    const when = this._smartDateTime(new Date(r.start || r.end));
+    const dur = (r.duration_s != null) ? this._fd(r.duration_s) : "";
+    const vol = (r.liters != null) ? `${this._fmtVolShortNum(r.liters)} L` : "—";
+    return `<div class="hl-row" title="${esc(this._outcomeLabel(r))}">`
+      + `<span class="hl-dot ${this._outcomeClass(r)}"></span>`
+      + `<span class="hl-when">${esc(when)}</span>`
+      + `<span class="hl-dur">${esc(dur)}</span>`
+      + `<span class="hl-vol">${esc(vol)}</span>`
+      + `</div>`;
+  }
+
+  // Build the run list. Only builds when open; a signature guard avoids
+  // rebuilding the innerHTML on every 1s render tick.
   _renderHistList() {
     const el = this._el.histList;
-    if (!el || !this._histListExpanded) return;
+    if (!el || !this._histOpen) return;
     const runs = this._histRuns();
     const sig = runs.length + "|" + ((runs[0] && runs[0].start) || "") + "|" + ((runs[0] && runs[0].end) || "");
     if (sig === this._histListSig && el.dataset.built === "1") return;
@@ -800,12 +840,7 @@ class IrrigationControlCard extends HTMLElement {
       el.dataset.built = "1";
       return;
     }
-    el.innerHTML = runs.map((r) => {
-      const when = this._smartDate(r.start ? new Date(r.start) : null) || "";
-      const dur = (r.duration_s != null) ? this._fd(r.duration_s) : "";
-      const vol = (r.liters != null) ? this._fmtVolShortNum(r.liters) + " L" : "—";
-      return `<div class="hl-row" title="${this._outcomeLabel(r)}"><span class="hl-dot ${this._outcomeClass(r)}"></span><span class="hl-when">${when}</span><span class="hl-dur">${dur}</span><span class="hl-vol">${vol}</span></div>`;
-    }).join("");
+    el.innerHTML = runs.map((r) => this._histRowHtml(r)).join("");
     el.dataset.built = "1";
   }
 
@@ -832,11 +867,7 @@ class IrrigationControlCard extends HTMLElement {
     const name = this._getName();
     const vm = this._histVM();
     const dur = vm.dur, vol = vm.vol;
-    const ago = this._ago(vm.whenDate);
     const smart = this._smartDate(vm.whenDate);
-    const stLocal = this._fmtLocalTime(vm.startISO);
-    const etLocal = this._fmtLocalTime(vm.endISO);
-    const hasStEt = !!(stLocal && etLocal);
     const hasData = vm.hasData;
 
     const { tp, lp } = this._runView();
@@ -861,7 +892,7 @@ class IrrigationControlCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
 <style>
-:host{--accent:#2ecc8b;--accent-dim:rgba(46,204,139,.12);--accent-hover:#27b67a;--blue:#4a90d9;--blue-dim:rgba(74,144,217,.12);--blue-text:#6aabf0;--danger:#e25555;--tm:var(--primary-text-color,#e8e8f0);--ts:var(--secondary-text-color,#8b8da5);--th:var(--disabled-text-color,#5c5e76);--bd:var(--divider-color,rgba(255,255,255,.06))}
+:host{--accent:#2ecc8b;--accent-dim:rgba(46,204,139,.12);--accent-hover:#27b67a;--blue:#4a90d9;--blue-dim:rgba(74,144,217,.12);--blue-text:#6aabf0;--danger:#e25555;--tm:var(--primary-text-color,#e8e8f0);--ts:var(--secondary-text-color,#8b8da5);--th:var(--disabled-text-color,#5c5e76);--bd:var(--divider-color,rgba(255,255,255,.06));--sep:var(--bd)}
 ha-card{overflow:hidden}
 .ch{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 6px}
 .hl{display:flex;align-items:center;gap:10px}
@@ -879,8 +910,6 @@ ha-card{overflow:hidden}
 .badge.offline{background:rgba(226,85,85,.15);color:var(--danger);font-weight:600}
 .cb{padding:6px 16px 14px}
 .sc{margin-bottom:16px}.sc:last-child{margin-bottom:0}
-.sl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:8px}
-.sl-inline{text-transform:none;font-weight:400;letter-spacing:normal;color:var(--ts);margin-left:4px}
 .dv{height:1px;background:var(--bd);margin:0 0 16px;display:none}
 .dv.vi{display:block}
 .ar{display:flex;gap:8px}
@@ -921,37 +950,29 @@ ha-card{overflow:hidden}
 .ss{width:38px;text-align:center;padding:5px 4px;border:1px solid var(--bd);background:transparent;border-radius:4px;outline:none;font-size:14px;font-weight:500;color:var(--tm);font-family:monospace;transition:border-color .15s}.ss:focus{border-color:rgba(74,144,217,.5)}
 .sep{font-size:13px;color:var(--th);padding:0 4px;user-select:none}
 .sht{font-size:9px;color:var(--th);margin-top:4px;letter-spacing:.05em}
-.hrow{display:flex;align-items:center;gap:12px;padding:4px 0}
-.hi{width:36px;height:36px;border-radius:8px;background:var(--bd);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.hn{flex:1;min-width:0}
-.hlb{font-size:12px;color:var(--th)}
-.hv{font-size:15px;font-weight:500;color:var(--tm)}
-.htx{font-size:11px;color:var(--th);white-space:nowrap;font-family:monospace}
-.exp-btn{background:none;border:1px solid var(--bd);border-radius:4px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--th);font-size:14px;font-family:monospace;transition:all .15s;flex-shrink:0;margin-left:6px;padding:0;line-height:1}
-.exp-btn:hover{color:var(--ts);border-color:var(--ts)}
-.exp-btn.open{color:var(--blue-text);border-color:rgba(74,144,217,.4)}
 .hist-compact{display:flex;align-items:center;gap:8px;padding:2px 0;min-height:24px}
 .hist-compact-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);flex-shrink:0}
 .hist-when{flex:1;min-width:0;font-size:12px;color:var(--tm);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hist-when.none{color:var(--ts);font-weight:400;font-style:italic}
-.hist-vol{font-size:12px;color:var(--tm);font-weight:500;white-space:nowrap;flex-shrink:0}
-.hist-vol-label{color:var(--th);font-weight:400}
-.hist-detail{margin-top:6px}
-.detail-row{display:flex;align-items:center;gap:8px;padding:4px 0 0 48px}
-.detail-label{font-size:11px;color:var(--th);min-width:36px}
-.detail-val{font-size:13px;font-weight:500;color:var(--tm);font-family:monospace}
-.hist-list-sec{margin-top:10px;border-top:1px solid var(--bd);padding-top:8px}
-.hist-list-head{display:flex;align-items:center;justify-content:space-between}
-.hist-list-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th)}
-.hist-list{margin-top:8px;max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
-.hl-row{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:6px;background:var(--bd)}
+.hist-sum{font-size:11px;color:var(--tm);font-family:monospace;white-space:nowrap;flex-shrink:0}
+.hist-toggle{background:none;border:none;color:var(--th);cursor:pointer;padding:2px 4px;flex-shrink:0;display:none;line-height:0;transition:transform .2s}
+.hist-toggle.open{transform:rotate(90deg)}
+.hist-toggle svg{display:block}
+.hist-list{margin-top:6px;max-height:200px;overflow-y:auto;display:none;flex-direction:column}
+.hist-list.vi{display:flex}
+.hl-row{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--sep)}
+.hl-row:last-child{border-bottom:none}
+/* Hairline derived from the secondary text colour: --divider-color alone is
+   ~12% white in HA's dark theme and all but vanishes as a 1px rule on black.
+   Guarded so browsers without color-mix keep the (fainter) --bd fallback. */
+@supports (color:color-mix(in srgb,red 50%,transparent)){.hl-row{border-bottom-color:color-mix(in srgb,var(--ts) 28%,transparent)}}
 .hl-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--th)}
 .hl-dot.ok{background:var(--accent)}
 .hl-dot.warn{background:#eab308}
 .hl-dot.neutral{background:var(--th)}
-.hl-when{flex:1;min-width:0;font-size:12px;color:var(--tm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hl-dur{font-size:11px;color:var(--ts);font-family:monospace;white-space:nowrap}
-.hl-vol{font-size:11px;color:var(--tm);font-family:monospace;white-space:nowrap;min-width:44px;text-align:right}
+.hl-when{font-size:11px;color:var(--tm);font-family:monospace;white-space:nowrap;flex-shrink:0}
+.hl-dur{margin-left:auto;font-size:11px;color:var(--ts);font-family:monospace;white-space:nowrap;min-width:56px;text-align:right}
+.hl-vol{font-size:11px;color:var(--tm);font-family:monospace;white-space:nowrap;min-width:46px;text-align:right}
 .hl-empty{font-size:12px;color:var(--th);text-align:center;padding:10px;font-style:italic}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 input[type=number]{-moz-appearance:textfield}
@@ -1024,35 +1045,13 @@ input[type=number]{-moz-appearance:textfield}
     </div>
     <div class="dv ${modeOpen?"vi":""}" id="divider"></div>
     <div class="sc" style="margin-bottom:0">
-      <div class="hist-compact" id="hist-compact" style="display:${this._histExpanded&&hasData?"none":"flex"}">
+      <div class="hist-compact" id="hist-compact">
         <span class="hist-compact-label">${t("last")}</span>
         <span class="hist-when ${hasData?"":"none"}" id="hist-when">${hasData?(smart||""):": "+t("none")}</span>
-        <span class="hist-vol" id="hist-vol" style="display:${hasData?"inline":"none"}"><span class="hist-vol-label">${t("liters")}:</span> <span id="hist-vol-val">${this._fmtVolShortNum(vol)}</span></span>
-        <button class="exp-btn" id="hexp-compact" style="display:${hasData?"flex":"none"}">+</button>
+        <span class="hist-sum" id="hist-sum">${hasData?this._summaryText(dur,vol):""}</span>
+        <button class="hist-toggle" id="hist-toggle" title="${t("history")}" style="display:${vm.hasHist?"block":"none"}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
       </div>
-      <div class="hist-expanded" id="hist-expanded" style="display:${this._histExpanded&&hasData?"block":"none"}">
-        <div class="sl">${t("lastIrrigation")}</div>
-        <div class="hrow">
-          <div class="hi"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--th)" stroke-width="2.2" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg></div>
-          <div class="hn">
-            <div class="hv">${this._fmtVol(vol)}</div>
-            <div class="hlb">${t("duration")}: ${this._fd(dur)}</div>
-          </div>
-          <span class="htx">${ago || ""}</span>
-          <button class="exp-btn open" id="hexp">\u2212</button>
-        </div>
-        <div class="hist-detail" id="hist-detail" style="display:${hasStEt?"block":"none"}">
-          <div class="detail-row"><span class="detail-label">${t("start")}</span><span class="detail-val" id="dv-start">${stLocal || ""}</span></div>
-          <div class="detail-row"><span class="detail-label">${t("end")}</span><span class="detail-val" id="dv-end">${etLocal || ""}</span></div>
-        </div>
-        <div class="hist-list-sec" id="hist-list-sec" style="display:${vm.hasHist?"block":"none"}">
-          <div class="hist-list-head">
-            <span class="hist-list-title">${t("history")}</span>
-            <button class="exp-btn ${this._histListExpanded?"open":""}" id="hlist-btn">${this._histListExpanded?"\u2212":"+"}</button>
-          </div>
-          <div class="hist-list" id="hist-list" style="display:${this._histListExpanded?"flex":"none"}"></div>
-        </div>
-      </div>
+      <div class="hist-list" id="hist-list"></div>
     </div>
   </div>
 </ha-card>`;
@@ -1076,18 +1075,13 @@ input[type=number]{-moz-appearance:textfield}
       litriFh: $("litri-fh"), litriPw: $("litri-pw"), litriBar: $("litri-bar"),
       rp: q(".rp"), sto: $("sto"), schedGrid: $("sched-grid"),
       svDisp: q(".sv"), ivHh: $("iv-hh"), ivMm: $("iv-mm"),
-      histCompact: $("hist-compact"), histExpanded: $("hist-expanded"),
-      histWhen: $("hist-when"), histVol: $("hist-vol"), histVolVal: $("hist-vol-val"),
-      histDetail: $("hist-detail"),
+      histWhen: $("hist-when"), histSum: $("hist-sum"),
       divider: $("divider"),
       intgMissing: $("intg-missing"),
       offBanner: $("off-banner"),
       actionSec: $("action-sec"),
       startOv: $("start-ov"), startOvTxt: $("start-ov-txt"),
-      hv: q(".hv"), hlb: q(".hlb"), htx: q(".htx"),
-      expBtn: $("hexp"), expBtnCompact: $("hexp-compact"),
-      histListSec: $("hist-list-sec"), hlistBtn: $("hlist-btn"), histList: $("hist-list"),
-      dvStart: $("dv-start"), dvEnd: $("dv-end"),
+      histToggle: $("hist-toggle"), histList: $("hist-list"),
     };
   }
 
@@ -1106,9 +1100,7 @@ input[type=number]{-moz-appearance:textfield}
     this.shadowRoot.getElementById("cp")?.addEventListener("click", () => this._adjCycles(1));
     el.ivHh?.addEventListener("change", () => this._setIv());
     el.ivMm?.addEventListener("change", () => this._setIv());
-    el.expBtn?.addEventListener("click", () => this._toggleHist());
-    el.expBtnCompact?.addEventListener("click", () => this._toggleHist());
-    el.hlistBtn?.addEventListener("click", () => this._toggleHistList());
+    el.histToggle?.addEventListener("click", () => this._toggleHist());
   }
 
   // ── Selective DOM update (runs on every subsequent hass update) ──
@@ -1122,11 +1114,7 @@ input[type=number]{-moz-appearance:textfield}
     const name = this._getName();
     const vm = this._histVM();
     const dur = vm.dur, vol = vm.vol;
-    const ago = this._ago(vm.whenDate);
     const smart = this._smartDate(vm.whenDate);
-    const stLocal = this._fmtLocalTime(vm.startISO);
-    const etLocal = this._fmtLocalTime(vm.endISO);
-    const hasStEt = !!(stLocal && etLocal);
     const hasData = vm.hasData;
 
     const { tp, lp } = this._runView();
@@ -1223,32 +1211,18 @@ input[type=number]{-moz-appearance:textfield}
       this._setInput(el.ivMm, this._p2(ivM));
     }
 
-    // ── History: compact / expanded summary + nested run list (level 2) ──
-    const showExpanded = this._histExpanded && hasData;
-    if (el.histCompact) el.histCompact.style.display = showExpanded ? "none" : "flex";
-    if (el.histExpanded) el.histExpanded.style.display = showExpanded ? "block" : "none";
+    // ── History: compact summary + the run list behind the chevron ──
     if (el.histWhen) {
       this._txt(el.histWhen, hasData ? (smart || "") : ": " + t("none"));
       this._cls(el.histWhen, "none", !hasData);
     }
-    if (el.histVol) el.histVol.style.display = hasData ? "inline" : "none";
-    if (el.expBtnCompact) el.expBtnCompact.style.display = hasData ? "flex" : "none";
-    if (hasData) {
-      this._txt(el.histVolVal, this._fmtVolShortNum(vol));
-      this._txt(el.hv, this._fmtVol(vol));
-      this._txt(el.hlb, t("duration") + ": " + this._fd(dur));
-      this._txt(el.htx, ago || "");
-      if (el.histDetail) el.histDetail.style.display = hasStEt ? "block" : "none";
-      if (hasStEt) {
-        this._txt(el.dvStart, stLocal);
-        this._txt(el.dvEnd, etLocal);
-      }
-    }
-    // Nested run list (level 2): the "+" appears only when the integration's
-    // history sensor has runs; degrades gracefully when the sensor is absent.
-    if (el.histListSec) el.histListSec.style.display = vm.hasHist ? "block" : "none";
-    if (el.hlistBtn) { this._txt(el.hlistBtn, this._histListExpanded ? "−" : "+"); this._cls(el.hlistBtn, "open", this._histListExpanded); }
-    if (el.histList) el.histList.style.display = this._histListExpanded ? "flex" : "none";
+    this._txt(el.histSum, hasData ? this._summaryText(dur, vol) : "");
+    // The chevron appears only when the integration's history sensor has runs,
+    // so the card degrades gracefully when the sensor is absent.
+    if (el.histToggle) el.histToggle.style.display = vm.hasHist ? "block" : "none";
+    const histOpen = vm.hasHist && this._histOpen;
+    this._cls(el.histToggle, "open", histOpen);
+    this._cls(el.histList, "vi", histOpen);
     this._renderHistList();
   }
 
@@ -1277,4 +1251,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.7.1 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.9.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

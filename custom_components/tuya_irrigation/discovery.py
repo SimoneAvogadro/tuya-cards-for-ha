@@ -3,17 +3,24 @@
 A device is treated as an irrigation valve when it exposes BOTH:
   * at least one `switch.*` entity (the valve), and
   * at least one `sensor.*` entity whose device_class is in
-    VALVE_VOLUME_DEVICE_CLASSES (a water-volume meter).
+    VALVE_VOLUME_DEVICE_CLASSES (a water-volume meter),
+
+and when no integration in FOREIGN_VALVE_PLATFORMS already owns it.
 
 This keeps energy-metering sockets (device_class=energy) out of scope while
-matching real flow-metering valves such as the GiEX QT06.
+matching real flow-metering valves such as the GiEX QT06 — and keeps this
+integration off valves that have one of their own.
 """
 from __future__ import annotations
+
+import logging
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 
-from .const import VALVE_VOLUME_DEVICE_CLASSES
+from .const import FOREIGN_VALVE_PLATFORMS, VALVE_VOLUME_DEVICE_CLASSES
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @callback
@@ -44,6 +51,9 @@ def find_valve_devices(hass: HomeAssistant) -> set[str]:
 
     valves: set[str] = set()
     for device_id, entries in by_device.items():
+        # A valve with a dedicated integration is not ours to adopt.
+        if any(e.platform in FOREIGN_VALVE_PLATFORMS for e in entries):
+            continue
         has_switch = any(e.domain == "switch" for e in entries)
         if not has_switch:
             continue
@@ -59,18 +69,35 @@ def find_valve_devices(hass: HomeAssistant) -> set[str]:
 
 @callback
 def valve_switch_for_device(hass: HomeAssistant, device_id: str) -> str | None:
-    """Return the first switch entity_id on a device, or None.
+    """Return the device's only switch entity_id, or None.
 
-    A valve device is expected to have exactly one switch; if it has several
-    the first (registry order) is used.
+    This integration is built on one switch per valve: every service call and
+    every run-log record is keyed by that entity. A device with several would
+    silently get the first one, so it is flagged — auto-detection already skips
+    the multi-line valves we know about (FOREIGN_VALVE_PLATFORMS), and anything
+    else reaching here is worth a line in the log rather than a silent guess.
     """
     ent_reg = er.async_get(hass)
-    for entry in er.async_entries_for_device(
-        ent_reg, device_id, include_disabled_entities=True
-    ):
-        if entry.domain == "switch":
-            return entry.entity_id
-    return None
+    switches = [
+        entry.entity_id
+        for entry in er.async_entries_for_device(
+            ent_reg, device_id, include_disabled_entities=True
+        )
+        if entry.domain == "switch"
+    ]
+    if not switches:
+        return None
+    if len(switches) > 1:
+        _LOGGER.warning(
+            "Device %s has %d switches (%s); this integration assumes one per "
+            "valve and will use %s. If this is a multi-line valve, it needs an "
+            "integration that knows about its lines",
+            device_id,
+            len(switches),
+            ", ".join(switches),
+            switches[0],
+        )
+    return switches[0]
 
 
 @callback

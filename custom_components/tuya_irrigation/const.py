@@ -64,6 +64,17 @@ KEEPALIVE_INTERVAL_S = 3600
 # sensor entity whose device_class is one of these (water volume meter).
 VALVE_VOLUME_DEVICE_CLASSES = frozenset({"volume", "water"})
 
+#: Integrations that own an irrigation valve outright. A device carrying their
+#: entities is skipped by auto-detection here: two integrations observing one
+#: valve write two run logs onto the same device, and the dedicated one always
+#: knows more than this heuristic can — per-line attribution, litres, mode.
+#:
+#: zha_sonoff_quirks: the SONOFF SWV-ZF2 matches the switch + water-volume
+#: heuristic below (partly thanks to that integration's OWN water totals), but
+#: it is a dual-line valve. This module assumes one switch per valve, so it
+#: would have driven line A whatever the user picked.
+FOREIGN_VALVE_PLATFORMS = frozenset({"zha_sonoff_quirks"})
+
 # Maximum seconds the "by seconds" service accepts (mirrors SECONDS_SCHEMA).
 MAX_IRRIGATION_SECONDS = 43200
 

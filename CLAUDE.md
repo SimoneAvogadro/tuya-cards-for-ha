@@ -15,7 +15,7 @@ tuya-cards-for-ha/
 │       ├── __init__.py           ← services + run-log manager + static path + Lovelace auto-reg + quirks import
 │       ├── config_flow.py        ← minimal single-entry config flow (one-click enable)
 │       ├── const.py
-│       ├── discovery.py          ← valve auto-detection (switch + water-volume sensor)
+│       ├── discovery.py          ← valve auto-detection (switch + water-volume sensor, minus foreign-owned)
 │       ├── binary_sensor.py      ← "Irrigazione in corso" per valve (device assoc + live run state)
 │       ├── sensor.py             ← per-valve irrigation-history + water-total sensors
 │       ├── history.py            ← IrrigationRunLog: switch-observer run log (Store-backed)

@@ -137,7 +137,7 @@ When you build an automation by **selecting a device first**, any recognized irr
 | **Litri🪣💧 (🌱irriga a volume)** / *Liters🪣💧 (🌱irrigate by volume)* | Liters | `irrigation_by_liters` (adaptive safety cap, 3600 s max) |
 | **Durata⏰💧 (🌱irriga a tempo)** / *Duration⏰💧 (🌱irrigate by time)* | Duration (hh:mm:ss) | `irrigation_by_seconds` |
 
-**Valve auto-detection:** a device qualifies when it has both a `switch.*` entity and a `sensor.*` entity with `device_class` `volume` or `water` (energy-metering sockets are ignored). Each detected valve also gets an **"Irrigazione in corso" / "Irrigating"** `binary_sensor`, `on` while a server-side run is active — this association is what surfaces the device actions and gives live feedback.
+**Valve auto-detection:** a device qualifies when it has both a `switch.*` entity and a `sensor.*` entity with `device_class` `volume` or `water` (energy-metering sockets are ignored), **and** no integration with a dedicated driver for it already owns entities on the device (`FOREIGN_VALVE_PLATFORMS`). The SONOFF SWV-ZF2 is the case that rule exists for: it matches the heuristic, but it is a *dual-line* valve, and this integration is built on one switch per valve — it would have driven line A whatever you picked. Its own integration, [zha-sonoff-quirks](https://github.com/SimoneAvogadro/zha-sonoff-quirks), handles both lines with per-line history, litres and mode. Each detected valve also gets an **"Irrigazione in corso" / "Irrigating"** `binary_sensor`, `on` while a server-side run is active — this association is what surfaces the device actions and gives live feedback.
 
 ---
 

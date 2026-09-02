@@ -1,6 +1,13 @@
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
+ * v1.4.0 — Air/soil compensation removed: each column now reads the entity
+ *          that carries it. The ZG-303Z reports the two humidity channels
+ *          swapped (soil on the standard 0x0405 cluster, air on Tuya DP 109),
+ *          and the card used to correct that client-side. The swap is now
+ *          fixed in the bundled ZHA quirk, so the compensation here would
+ *          have re-inverted it. Requires tuya_irrigation >= 2.10.0: with an
+ *          older quirk this card shows the two values swapped.
  * v1.3.2 — Name field: defer config-changed to the `change` event (blur/Enter)
  *          instead of firing per keystroke on `input`. v1.3.1 stopped the
  *          editor from rebuilding its own DOM, but per-keystroke
@@ -520,4 +527,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for soil moisture, temperature and air humidity sensors";
   window.customCards.push({ type: "soil-moisture-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c SOIL-MOISTURE-CARD %c v1.3.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c SOIL-MOISTURE-CARD %c v1.4.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

@@ -302,8 +302,8 @@ class SoilMoistureCard extends HTMLElement {
     if (s.state === "unavailable" || s.state === "unknown" || s.state === "none") return true;
 
     const battSt = this._hass?.states[e.battery];
-    const soilSt = this._hass?.states[e.humidity];
-    const humSt = this._hass?.states[e.soil_moisture];
+    const soilSt = this._hass?.states[e.soil_moisture];
+    const humSt = this._hass?.states[e.humidity];
     if (battSt && soilSt && humSt) {
       const batt = parseFloat(battSt.state);
       const soil = parseFloat(soilSt.state);
@@ -354,11 +354,9 @@ class SoilMoistureCard extends HTMLElement {
 
   _createDOM() {
     const e = this._entities;
-    // NOTE: sources intentionally swapped — this device reports soil moisture
-    // under the _humidity suffix and air humidity under _soil_moisture.
-    const soil = this._nv(e.humidity);
+    const soil = this._nv(e.soil_moisture);
     const temp = this._nv(e.temperature);
-    const hum = this._nv(e.soil_moisture);
+    const hum = this._nv(e.humidity);
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
     const name = this._getName();
@@ -467,10 +465,9 @@ ha-card{overflow:hidden}
       return;
     }
 
-    // Sources swapped: see note in _createDOM.
-    const soil = this._nv(e.humidity);
+    const soil = this._nv(e.soil_moisture);
     const temp = this._nv(e.temperature);
-    const hum = this._nv(e.soil_moisture);
+    const hum = this._nv(e.humidity);
     const batt = this._nv(e.battery);
     const loc = _smLocale(this._hass);
     const tc = this._thresholdColor(soil);

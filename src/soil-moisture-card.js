@@ -41,7 +41,7 @@ const SM_I18N = {
   it: {
     soil: "Terreno", temperature: "Temperatura", humidity: "Aria",
     editorDevice: "Sensore umidità suolo", editorSelect: "— Seleziona —",
-    editorHint: "Mostra solo i sensori con temperatura, umidità suolo e aria",
+    editorHint: "Mostra solo i sensori con umidità suolo e temperatura (umidità aria opzionale)",
     editorNoDevice: "Nessun sensore compatibile trovato",
     editorName: "Nome (opzionale)", editorNamePh: "Nome personalizzato",
     editorNameHint: "Lascia vuoto per usare il nome del dispositivo",
@@ -57,7 +57,7 @@ const SM_I18N = {
   en: {
     soil: "Soil", temperature: "Temperature", humidity: "Air",
     editorDevice: "Soil moisture sensor", editorSelect: "— Select —",
-    editorHint: "Shows only sensors with temperature, soil moisture and air humidity",
+    editorHint: "Shows only sensors with soil moisture and temperature (air humidity optional)",
     editorNoDevice: "No compatible sensor found",
     editorName: "Name (optional)", editorNamePh: "Custom name",
     editorNameHint: "Leave empty to use device name",
@@ -73,7 +73,7 @@ const SM_I18N = {
   zh: {
     soil: "土壤", temperature: "温度", humidity: "空气",
     editorDevice: "土壤湿度传感器", editorSelect: "— 选择 —",
-    editorHint: "仅显示具有温度、土壤湿度和空气湿度的传感器",
+    editorHint: "仅显示具有土壤湿度和温度的传感器（空气湿度可选）",
     editorNoDevice: "未找到兼容的传感器",
     editorName: "名称（可选）", editorNamePh: "自定义名称",
     editorNameHint: "留空使用设备名称",
@@ -101,7 +101,8 @@ const SM_SUFFIXES = {
   humidity:      { domain: "sensor", suffix: "_humidity" },
   battery:       { domain: "sensor", suffix: "_battery" },
 };
-const SM_REQUIRED = ["soil_moisture", "temperature", "humidity"];
+// `humidity` and `battery` are optional: 2-in-1 soil probes have no air channel.
+const SM_REQUIRED = ["soil_moisture", "temperature"];
 
 function smBuildEntities(primary) {
   const p = primary.replace("sensor.", "").replace(/_soil_moisture$/, "");
@@ -301,7 +302,8 @@ class SoilMoistureCard extends HTMLElement {
   // unchanged values, so a staleness threshold would false-positive.
   // Plus a "ghost zeros" guard: a dead-battery device sometimes keeps
   // reporting cached zeros indefinitely; if battery + soil + air humidity
-  // are all exactly 0%, treat as offline.
+  // are all exactly 0%, treat as offline. On probes without an air channel
+  // the guard degrades to battery + soil.
   _isOffline() {
     const e = this._entities;
     const s = this._hass?.states[e.soil_moisture];
@@ -311,10 +313,10 @@ class SoilMoistureCard extends HTMLElement {
     const battSt = this._hass?.states[e.battery];
     const soilSt = this._hass?.states[e.soil_moisture];
     const humSt = this._hass?.states[e.humidity];
-    if (battSt && soilSt && humSt) {
+    if (battSt && soilSt) {
       const batt = parseFloat(battSt.state);
       const soil = parseFloat(soilSt.state);
-      const hum = parseFloat(humSt.state);
+      const hum = humSt ? parseFloat(humSt.state) : 0;
       if (batt === 0 && soil === 0 && hum === 0) return true;
     }
     return false;
@@ -366,6 +368,7 @@ class SoilMoistureCard extends HTMLElement {
     const hum = this._nv(e.humidity);
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
+    const hasHum = this._hass.states[e.humidity] !== undefined;
     const name = this._getName();
     const loc = _smLocale(this._hass);
     const t = (k) => _sm(this._hass, k);
@@ -389,7 +392,7 @@ ha-card{overflow:hidden}
 .bp{width:2px;height:5px;background:var(--th);border-radius:0 1px 1px 0;margin-left:-1px}
 .badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;background:rgba(226,85,85,.15);color:var(--danger)}
 .cb{padding:6px 16px 14px}
-.cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center}
+.cols{display:grid;grid-template-columns:repeat(${hasHum ? 3 : 2},1fr);gap:10px;text-align:center}
 .col-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:4px}
 .col-value{font-size:18px;font-weight:600;color:var(--tm);font-family:monospace;line-height:1.2}
 .col-unit{font-size:11px;font-weight:400;color:var(--ts)}
@@ -424,10 +427,10 @@ ha-card{overflow:hidden}
         <div class="col-label">${t("temperature")}</div>
         <div class="col-value" id="v-temp">${temp.toLocaleString(loc, {minimumFractionDigits:1,maximumFractionDigits:1})} °C</div>
       </div>
-      <div class="col" id="col-hum">
+      ${hasHum ? `<div class="col" id="col-hum">
         <div class="col-label">${t("humidity")}</div>
         <div class="col-value" id="v-hum">${hum.toLocaleString(loc, {maximumFractionDigits:0})}%</div>
-      </div>
+      </div>` : ""}
     </div>
   </div>
 </ha-card>`;

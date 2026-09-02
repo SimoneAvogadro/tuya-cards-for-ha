@@ -23,7 +23,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 |---|---|---|
 | `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves + bundled ZHA quirks | v2.10.0 |
 | `irrigation-control-card` | Lovelace card driving the services above | v2.9.1 |
-| `soil-moisture-card` | Card for soil moisture + temperature + air humidity sensors | v1.4.0 |
+| `soil-moisture-card` | Card for soil moisture + temperature (+ optional air humidity) sensors | v1.4.0 |
 
 ## Installation (HACS)
 
@@ -195,7 +195,7 @@ name: Irrigatore 31  # optional, defaults to friendly_name
 
 ## Soil Moisture Card
 
-Compact card for the HOBEIAN sensor — soil moisture, temperature and air humidity in a three-column layout, with a colored progress bar for soil moisture.
+Compact card for Tuya soil probes — soil moisture, temperature and air humidity in a three-column layout (two columns on 2-in-1 probes without an air channel), with a colored progress bar for soil moisture.
 
 - **Configurable thresholds**: optimal (green) and acceptable (yellow) ranges per plant; outside acceptable = red.
 - **Auto-discovery** from a single `_soil_moisture` sensor; **visual editor** with threshold config; **battery indicator**.

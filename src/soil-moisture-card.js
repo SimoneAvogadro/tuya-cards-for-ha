@@ -1,6 +1,11 @@
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
+ * v1.5.0 — Air humidity is now optional. 2-in-1 probes that only expose soil
+ *          moisture + temperature (e.g. TS0601 `_TZE2841000000_tgrzpqf4`)
+ *          are discovered by the editor and render a two-column layout
+ *          without the "Air" column. The ghost-zeros offline guard falls
+ *          back to battery + soil when there is no air channel to cross-check.
  * v1.4.0 — Air/soil compensation removed: each column now reads the entity
  *          that carries it. The ZG-303Z reports the two humidity channels
  *          swapped (soil on the standard 0x0405 cluster, air on Tuya DP 109),
@@ -530,4 +535,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for soil moisture, temperature and air humidity sensors";
   window.customCards.push({ type: "soil-moisture-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c SOIL-MOISTURE-CARD %c v1.4.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c SOIL-MOISTURE-CARD %c v1.5.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

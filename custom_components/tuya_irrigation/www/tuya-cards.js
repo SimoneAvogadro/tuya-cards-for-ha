@@ -1333,6 +1333,7 @@ const SM_I18N = {
     cardDesc: "Card compatta per sensori umidità suolo, temperatura e umidità aria",
     offline: "Offline",
     offlineMsg: "Sensore non raggiungibile — controllare batteria e segnale Zigbee",
+    updated: "Aggiornato {rel}", relNow: "adesso", relMin: "{n} min fa", relHour: "{n} h fa", relDay: "{n} g fa",
   },
   en: {
     soil: "Soil", temperature: "Temperature", humidity: "Air",
@@ -1349,6 +1350,7 @@ const SM_I18N = {
     cardDesc: "Compact card for soil moisture, temperature and air humidity sensors",
     offline: "Offline",
     offlineMsg: "Sensor unreachable — check battery and Zigbee signal",
+    updated: "Updated {rel}", relNow: "just now", relMin: "{n} min ago", relHour: "{n} h ago", relDay: "{n} d ago",
   },
   zh: {
     soil: "土壤", temperature: "温度", humidity: "空气",
@@ -1365,6 +1367,7 @@ const SM_I18N = {
     cardDesc: "土壤湿度、温度和空气湿度传感器紧凑卡片",
     offline: "离线",
     offlineMsg: "传感器无法连接 — 请检查电池和 Zigbee 信号",
+    updated: "{rel}更新", relNow: "刚刚", relMin: "{n} 分钟前", relHour: "{n} 小时前", relDay: "{n} 天前",
   },
 };
 function _smLang(hass) {
@@ -1373,6 +1376,30 @@ function _smLang(hass) {
 }
 function _sm(hass, key) { return (SM_I18N[_smLang(hass)] || SM_I18N.en)[key] || SM_I18N.en[key] || key; }
 function _smLocale(hass) { return hass?.language || "en"; }
+
+// "Updated N ago" from the newest last_updated among the card's entities.
+// last_updated is HA's last *change* of state/attributes: a sensor that keeps
+// reporting the same value does not refresh it, and a ZHA re-join rewrites
+// it, so read it as "the value you see is at least this old".
+function smRelativeTime(hass, ageMs) {
+  const t = (k) => _sm(hass, k);
+  const min = Math.floor(ageMs / 60000);
+  if (min < 1) return t("relNow");
+  if (min < 60) return t("relMin").replace("{n}", min);
+  const h = Math.floor(min / 60);
+  if (h < 24) return t("relHour").replace("{n}", h);
+  return t("relDay").replace("{n}", Math.floor(h / 24));
+}
+function smNewestUpdate(hass, entityIds) {
+  let newest = 0;
+  for (const id of entityIds) {
+    const st = hass?.states[id];
+    if (!st || st.state === "unavailable" || st.state === "unknown") continue;
+    const ts = Date.parse(st.last_updated);
+    if (ts > newest) newest = ts;
+  }
+  return newest;
+}
 
 // ── Entity discovery ──
 const SM_SUFFIXES = {
@@ -1623,6 +1650,23 @@ class SoilMoistureCard extends HTMLElement {
 
   _txt(el, v) { if (el && el.textContent !== v) el.textContent = v; }
 
+  _updatedText() {
+    const e = this._entities;
+    const newest = smNewestUpdate(this._hass, [e.soil_moisture, e.temperature, e.humidity, e.battery]);
+    if (!newest) return "";
+    return _sm(this._hass, "updated").replace("{rel}", smRelativeTime(this._hass, Date.now() - newest));
+  }
+
+  // The "updated N ago" line ages without any new hass push: refresh it once
+  // a minute while the card is on screen.
+  connectedCallback() {
+    if (this._tick) return;
+    this._tick = setInterval(() => { if (this._el) this._txt(this._el.upd, this._updatedText()); }, 60000);
+  }
+  disconnectedCallback() {
+    if (this._tick) { clearInterval(this._tick); this._tick = null; }
+  }
+
   _thresholdColor(value) {
     return smColor(value, this._optMin, this._optMax, this._accMin, this._accMax);
   }
@@ -1674,8 +1718,9 @@ ha-card{overflow:hidden}
 .cb{padding:6px 16px 14px}
 .cols{display:grid;grid-template-columns:repeat(${hasHum ? 3 : 2},1fr);gap:10px;text-align:center}
 .col-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:4px}
-.col-value{font-size:18px;font-weight:600;color:var(--tm);font-family:monospace;line-height:1.2}
+.col-value{font-size:18px;font-weight:600;color:var(--tm);font-family:monospace;line-height:1.2;white-space:nowrap}
 .col-unit{font-size:11px;font-weight:400;color:var(--ts)}
+.upd{margin-top:8px;text-align:right;font-size:10px;color:var(--th);font-family:monospace}
 .bar-wrap{height:4px;border-radius:2px;background:var(--bd);margin-top:6px;overflow:hidden}
 .bar-fill{height:100%;border-radius:2px;transition:width .4s ease,background .3s}
 .off-banner{background:rgba(226,85,85,.12);color:var(--danger);border:1px solid rgba(226,85,85,.3);border-radius:8px;padding:10px 12px;font-size:12px;align-items:center;gap:8px}
@@ -1700,18 +1745,19 @@ ha-card{overflow:hidden}
     <div class="cols" id="cols-view" style="display:${offline?"none":"grid"}">
       <div class="col" id="col-soil">
         <div class="col-label">${t("soil")}</div>
-        <div class="col-value" id="v-soil" style="color:${cc.text}">${soil.toLocaleString(loc, {maximumFractionDigits:0})}%</div>
+        <div class="col-value" id="v-soil" style="color:${cc.text}"><span id="n-soil">${soil.toLocaleString(loc, {maximumFractionDigits:0})}</span><span class="col-unit">%</span></div>
         <div class="bar-wrap"><div class="bar-fill" id="bar-soil" style="width:${Math.min(100,soil)}%;background:${cc.bar}"></div></div>
       </div>
       <div class="col" id="col-temp">
         <div class="col-label">${t("temperature")}</div>
-        <div class="col-value" id="v-temp">${temp.toLocaleString(loc, {minimumFractionDigits:1,maximumFractionDigits:1})} °C</div>
+        <div class="col-value" id="v-temp"><span id="n-temp">${temp.toLocaleString(loc, {minimumFractionDigits:1,maximumFractionDigits:1})}</span><span class="col-unit"> °C</span></div>
       </div>
       ${hasHum ? `<div class="col" id="col-hum">
         <div class="col-label">${t("humidity")}</div>
-        <div class="col-value" id="v-hum">${hum.toLocaleString(loc, {maximumFractionDigits:0})}%</div>
+        <div class="col-value" id="v-hum"><span id="n-hum">${hum.toLocaleString(loc, {maximumFractionDigits:0})}</span><span class="col-unit">%</span></div>
       </div>` : ""}
     </div>
+    <div class="upd" id="upd">${this._updatedText()}</div>
   </div>
 </ha-card>`;
     this._cacheEls();
@@ -1730,9 +1776,11 @@ ha-card{overflow:hidden}
       offBadge: r.getElementById("off-badge"),
       offBanner: r.getElementById("off-banner"),
       vSoil: r.getElementById("v-soil"),
+      nSoil: r.getElementById("n-soil"),
       barSoil: r.getElementById("bar-soil"),
-      vTemp: r.getElementById("v-temp"),
-      vHum: r.getElementById("v-hum"),
+      nTemp: r.getElementById("n-temp"),
+      nHum: r.getElementById("n-hum"),
+      upd: r.getElementById("upd"),
     };
   }
 
@@ -1747,6 +1795,8 @@ ha-card{overflow:hidden}
     if (el.offBanner) el.offBanner.style.display = offline ? "flex" : "none";
     if (el.offBadge) el.offBadge.style.display = offline ? "inline-block" : "none";
     if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
+
+    this._txt(el.upd, this._updatedText());
 
     if (offline) {
       // Dim the header icon to gray when offline so the visual cue carries.
@@ -1770,8 +1820,7 @@ ha-card{overflow:hidden}
     if (el.iconSvg) el.iconSvg.setAttribute("fill", cc.text);
 
     if (el.vSoil) {
-      const soilTxt = soil.toLocaleString(loc, {maximumFractionDigits:0}) + "%";
-      this._txt(el.vSoil, soilTxt);
+      this._txt(el.nSoil, soil.toLocaleString(loc, {maximumFractionDigits:0}));
       el.vSoil.style.color = cc.text;
     }
     if (el.barSoil) {
@@ -1779,12 +1828,8 @@ ha-card{overflow:hidden}
       el.barSoil.style.background = cc.bar;
     }
 
-    if (el.vTemp) {
-      this._txt(el.vTemp, temp.toLocaleString(loc, {minimumFractionDigits:1,maximumFractionDigits:1}) + " °C");
-    }
-    if (el.vHum) {
-      this._txt(el.vHum, hum.toLocaleString(loc, {maximumFractionDigits:0}) + "%");
-    }
+    this._txt(el.nTemp, temp.toLocaleString(loc, {minimumFractionDigits:1,maximumFractionDigits:1}));
+    this._txt(el.nHum, hum.toLocaleString(loc, {maximumFractionDigits:0}));
   }
 }
 

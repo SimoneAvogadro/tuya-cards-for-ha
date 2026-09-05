@@ -58,7 +58,7 @@ const SM_I18N = {
     cardDesc: "Card compatta per sensori umidità suolo, temperatura e umidità aria",
     offline: "Offline",
     offlineMsg: "Sensore non raggiungibile — controllare batteria e segnale Zigbee",
-    updated: "Aggiornato {rel}", relNow: "adesso", relMin: "{n} min fa", relHour: "{n} h fa", relDay: "{n} g fa",
+    relNow: "adesso", relMin: "{n} min fa", relHour: "{n} h fa", relDay: "{n} g fa",
   },
   en: {
     soil: "Soil", temperature: "Temperature", humidity: "Air",
@@ -75,7 +75,7 @@ const SM_I18N = {
     cardDesc: "Compact card for soil moisture, temperature and air humidity sensors",
     offline: "Offline",
     offlineMsg: "Sensor unreachable — check battery and Zigbee signal",
-    updated: "Updated {rel}", relNow: "just now", relMin: "{n} min ago", relHour: "{n} h ago", relDay: "{n} d ago",
+    relNow: "just now", relMin: "{n} min ago", relHour: "{n} h ago", relDay: "{n} d ago",
   },
   zh: {
     soil: "土壤", temperature: "温度", humidity: "空气",
@@ -92,7 +92,7 @@ const SM_I18N = {
     cardDesc: "土壤湿度、温度和空气湿度传感器紧凑卡片",
     offline: "离线",
     offlineMsg: "传感器无法连接 — 请检查电池和 Zigbee 信号",
-    updated: "{rel}更新", relNow: "刚刚", relMin: "{n} 分钟前", relHour: "{n} 小时前", relDay: "{n} 天前",
+    relNow: "刚刚", relMin: "{n} 分钟前", relHour: "{n} 小时前", relDay: "{n} 天前",
   },
 };
 function _smLang(hass) {
@@ -379,7 +379,7 @@ class SoilMoistureCard extends HTMLElement {
     const e = this._entities;
     const newest = smNewestUpdate(this._hass, [e.soil_moisture, e.temperature, e.humidity, e.battery]);
     if (!newest) return "";
-    return _sm(this._hass, "updated").replace("{rel}", smRelativeTime(this._hass, Date.now() - newest));
+    return smRelativeTime(this._hass, Date.now() - newest);
   }
 
   // The "updated N ago" line ages without any new hass push: refresh it once
@@ -418,6 +418,9 @@ class SoilMoistureCard extends HTMLElement {
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
     const hasHum = this._hass.states[e.humidity] !== undefined;
+    // "N min ago" sits in the last column on the same row as the soil bar,
+    // so it adds no height to the card.
+    const updLine = `<div class="upd" id="upd">${this._updatedText()}</div>`;
     const name = this._getName();
     const loc = _smLocale(this._hass);
     const t = (k) => _sm(this._hass, k);
@@ -443,9 +446,9 @@ ha-card{overflow:hidden}
 .cb{padding:6px 16px 14px}
 .cols{display:grid;grid-template-columns:repeat(${hasHum ? 3 : 2},1fr);gap:10px;text-align:center}
 .col-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:4px}
-.col-value{font-size:18px;font-weight:600;color:var(--tm);font-family:monospace;line-height:1.2;white-space:nowrap}
-.col-unit{font-size:11px;font-weight:400;color:var(--ts)}
-.upd{margin-top:8px;text-align:right;font-size:10px;color:var(--th);font-family:monospace}
+.col-value{font-size:20px;font-weight:600;color:var(--tm);font-family:monospace;line-height:1.2;white-space:nowrap}
+.col-unit{font-size:12px;font-weight:400;color:var(--ts)}
+.upd{height:4px;margin-top:6px;line-height:4px;text-align:right;font-size:10px;color:var(--th);font-family:monospace;white-space:nowrap}
 .bar-wrap{height:4px;border-radius:2px;background:var(--bd);margin-top:6px;overflow:hidden}
 .bar-fill{height:100%;border-radius:2px;transition:width .4s ease,background .3s}
 .off-banner{background:rgba(226,85,85,.12);color:var(--danger);border:1px solid rgba(226,85,85,.3);border-radius:8px;padding:10px 12px;font-size:12px;align-items:center;gap:8px}
@@ -475,14 +478,15 @@ ha-card{overflow:hidden}
       </div>
       <div class="col" id="col-temp">
         <div class="col-label">${t("temperature")}</div>
-        <div class="col-value" id="v-temp"><span id="n-temp">${temp.toLocaleString(loc, {minimumFractionDigits:1,maximumFractionDigits:1})}</span><span class="col-unit"> °C</span></div>
+        <div class="col-value" id="v-temp"><span id="n-temp">${temp.toLocaleString(loc, {minimumFractionDigits:1,maximumFractionDigits:1})}</span><span class="col-unit">C</span></div>
+        ${hasHum ? "" : updLine}
       </div>
       ${hasHum ? `<div class="col" id="col-hum">
         <div class="col-label">${t("humidity")}</div>
         <div class="col-value" id="v-hum"><span id="n-hum">${hum.toLocaleString(loc, {maximumFractionDigits:0})}</span><span class="col-unit">%</span></div>
+        ${updLine}
       </div>` : ""}
     </div>
-    <div class="upd" id="upd">${this._updatedText()}</div>
   </div>
 </ha-card>`;
     this._cacheEls();

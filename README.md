@@ -32,7 +32,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 2. **Immediately** search "Tuya Irrigation" in HACS → open it → **Download**. *(Do not restart before downloading — see note below.)*
 3. **Restart Home Assistant.**
 4. Settings → Devices & Services → **Add Integration** → "Tuya Irrigation" → Submit (no inputs).
-5. The card bundle is served and auto-registered as a Lovelace resource automatically (in *storage* mode, the default). Hard-refresh the browser (Ctrl+Shift+R). If your dashboard is in YAML mode, add the resource manually under Settings → Dashboards → Resources: url `/tuya_irrigation/tuya-cards.js`, type **module**.
+5. The card bundle is served and auto-registered as a Lovelace resource automatically (in *storage* mode, the default); the resource URL carries a content hash, so updated cards show up after a normal page reload. If your dashboard is in YAML mode, add the resource manually under Settings → Dashboards → Resources: url `/tuya_irrigation/tuya-cards.js`, type **module**.
 
 > ⚠️ **Do not restart between steps 1 and 2.** HACS 2.x removes custom repositories that are registered but not yet downloaded at every startup. Click **Download** first — from then on the repo persists across restarts.
 

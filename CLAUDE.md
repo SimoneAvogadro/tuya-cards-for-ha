@@ -136,7 +136,7 @@ No automated tests. Verify manually on a real HA instance:
 - Integration loads without errors (Settings → Devices & Services → Logs).
 - Both services visible in Dev Tools → Services with proper field UI.
 - `tuya_irrigation.irrigation_by_seconds` with 5s closes the valve after 5s even on a valve with broken firmware auto-off.
-- Lovelace resource auto-registered at `/tuya_irrigation/tuya-cards.js?v=<VERSION>`.
+- Lovelace resource auto-registered at `/tuya_irrigation/tuya-cards.js?v=<VERSION>-<hash8>` (hash of the bundle content, so every rebuilt bundle gets a fresh URL and no client cache survives it).
 - Cards render correctly in light and dark theme.
 - Auto-discovery finds compatible devices in both visual editors.
 - Browser-closed test: start a 60s irrigation → close tab → wait 90s → reopen → valve is off.

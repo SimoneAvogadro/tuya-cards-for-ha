@@ -12,6 +12,7 @@ Services registered:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import timedelta
 from pathlib import Path
@@ -244,6 +245,19 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     async_when_setup(hass, "lovelace", _async_register_lovelace_resource)
 
 
+def _bundle_digest(path: Path) -> str:
+    """Short content hash of a served bundle, or "" if it cannot be read.
+
+    Appended to the resource URL so that any rebuilt bundle gets a new URL:
+    browsers and the companion app cache JS modules by URL, and VERSION
+    only changes at release time.
+    """
+    try:
+        return hashlib.sha1(path.read_bytes()).hexdigest()[:8]
+    except OSError:
+        return ""
+
+
 async def _async_register_lovelace_resource(
     hass: HomeAssistant, _component: str
 ) -> None:
@@ -280,9 +294,14 @@ async def _async_register_lovelace_resource(
         _LOGGER.warning("Could not load Lovelace resources: %s", err)
         return
 
+    www_dir = Path(__file__).parent / "www"
     for module in JSMODULES:
         url = f"{URL_BASE}/{module['filename']}"
-        versioned_url = f"{url}?v={module['version']}"
+        digest = await hass.async_add_executor_job(
+            _bundle_digest, www_dir / module["filename"]
+        )
+        version = f"{module['version']}-{digest}" if digest else module["version"]
+        versioned_url = f"{url}?v={version}"
         found_id: str | None = None
         try:
             items = resources.async_items()

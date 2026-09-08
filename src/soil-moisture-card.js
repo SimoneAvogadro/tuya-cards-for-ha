@@ -1,6 +1,15 @@
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
+ * v1.6.0 — Trend panel. Tapping a reading (soil / temperature / air) opens a
+ *          section under the readings, styled like the energy-statistics
+ *          panel of power-switch-card (zha-tuya-quirks): Day = the recorded
+ *          trend of the value, Week / Month = daily min and max lines with a
+ *          band between them. Data comes from the recorder (raw history for
+ *          the day, long-term statistics otherwise) via <sensor-trend-panel>
+ *          in src/sensor-trend-panel.js — no backend change. Tapping the open
+ *          column closes it; another column switches metric and keeps the
+ *          chosen view and period. Closes automatically when offline.
  * v1.5.1 — Bigger readings, unit glued to the number (like the "%"), and an
  *          "updated N ago" line on the soil-bar row.
  * v1.5.0 — Air humidity is now optional. 2-in-1 probes that only expose soil
@@ -60,6 +69,7 @@ const SM_I18N = {
     cardDesc: "Card compatta per sensori umidità suolo, temperatura e umidità aria",
     offline: "Offline",
     offlineMsg: "Sensore non raggiungibile — controllare batteria e segnale Zigbee",
+    trend: "Mostra l'andamento",
     relNow: "adesso", relMin: "{n} min fa", relHour: "{n} h fa", relDay: "{n} g fa",
   },
   en: {
@@ -77,6 +87,7 @@ const SM_I18N = {
     cardDesc: "Compact card for soil moisture, temperature and air humidity sensors",
     offline: "Offline",
     offlineMsg: "Sensor unreachable — check battery and Zigbee signal",
+    trend: "Show trend",
     relNow: "just now", relMin: "{n} min ago", relHour: "{n} h ago", relDay: "{n} d ago",
   },
   zh: {
@@ -94,6 +105,7 @@ const SM_I18N = {
     cardDesc: "土壤湿度、温度和空气湿度传感器紧凑卡片",
     offline: "离线",
     offlineMsg: "传感器无法连接 — 请检查电池和 Zigbee 信号",
+    trend: "显示趋势",
     relNow: "刚刚", relMin: "{n} 分钟前", relHour: "{n} 小时前", relDay: "{n} 天前",
   },
 };
@@ -311,6 +323,11 @@ class SoilMoistureCard extends HTMLElement {
     this._hass = null; this._config = null; this._entities = null;
     this._domCreated = false;
     this._el = {};
+    // Trend panel: created on first tap, never before — a collapsed card costs
+    // nothing. _trendMetric is the open column ("soil" | "temperature" |
+    // "humidity") or null when the panel is closed.
+    this._trendMetric = null;
+    this._panel = null;
   }
 
   static getConfigElement() { return document.createElement("soil-moisture-card-editor"); }
@@ -326,6 +343,8 @@ class SoilMoistureCard extends HTMLElement {
     this._accMax = config.acc_max ?? 80;
     this._config = config;
     this._domCreated = false;
+    this._trendMetric = null;
+    this._panel = null;
     if (this._hass) this._render();
   }
 
@@ -388,7 +407,10 @@ class SoilMoistureCard extends HTMLElement {
   // a minute while the card is on screen.
   connectedCallback() {
     if (this._tick) return;
-    this._tick = setInterval(() => { if (this._el) this._txt(this._el.upd, this._updatedText()); }, 60000);
+    this._tick = setInterval(() => {
+      if (this._el) this._txt(this._el.upd, this._updatedText());
+      if (this._panel && this._trendMetric !== null) this._panel.refreshIfCurrent();
+    }, 60000);
   }
   disconnectedCallback() {
     if (this._tick) { clearInterval(this._tick); this._tick = null; }
@@ -447,6 +469,12 @@ ha-card{overflow:hidden}
 .badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;background:rgba(226,85,85,.15);color:var(--danger)}
 .cb{padding:6px 16px 14px}
 .cols{display:grid;grid-template-columns:repeat(${hasHum ? 3 : 2},1fr);gap:10px;text-align:center}
+.col{cursor:pointer;border-radius:8px;padding:4px;margin:-4px;transition:background .15s;outline:none;-webkit-tap-highlight-color:transparent}
+.col:hover,.col:focus-visible{background:var(--bd)}
+.col.sel{background:var(--bd)}
+.col.sel .col-label{color:var(--tm)}
+.panel-wrap{border-top:1px solid var(--bd)}
+.panel-wrap[hidden]{display:none}
 .col-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--th);margin-bottom:4px}
 .col-value{font-size:20px;font-weight:600;color:var(--tm);font-family:monospace;line-height:1.2;white-space:nowrap}
 .col-unit{font-size:12px;font-weight:400;color:var(--ts)}
@@ -473,25 +501,75 @@ ha-card{overflow:hidden}
       <span>${t("offlineMsg")}</span>
     </div>
     <div class="cols" id="cols-view" style="display:${offline?"none":"grid"}">
-      <div class="col" id="col-soil">
+      <div class="col" id="col-soil" role="button" tabindex="0" title="${t("trend")}">
         <div class="col-label">${t("soil")}</div>
         <div class="col-value" id="v-soil" style="color:${cc.text}"><span id="n-soil">${soil.toLocaleString(loc, {maximumFractionDigits:0})}</span><span class="col-unit">%</span></div>
         <div class="bar-wrap"><div class="bar-fill" id="bar-soil" style="width:${Math.min(100,soil)}%;background:${cc.bar}"></div></div>
       </div>
-      <div class="col" id="col-temp">
+      <div class="col" id="col-temp" role="button" tabindex="0" title="${t("trend")}">
         <div class="col-label">${t("temperature")}</div>
         <div class="col-value" id="v-temp"><span id="n-temp">${temp.toLocaleString(loc, {minimumFractionDigits:1,maximumFractionDigits:1})}</span><span class="col-unit">C</span></div>
         ${hasHum ? "" : updLine}
       </div>
-      ${hasHum ? `<div class="col" id="col-hum">
+      ${hasHum ? `<div class="col" id="col-hum" role="button" tabindex="0" title="${t("trend")}">
         <div class="col-label">${t("humidity")}</div>
         <div class="col-value" id="v-hum"><span id="n-hum">${hum.toLocaleString(loc, {maximumFractionDigits:0})}</span><span class="col-unit">%</span></div>
         ${updLine}
       </div>` : ""}
     </div>
   </div>
+  <div class="panel-wrap" id="panel-wrap" hidden></div>
 </ha-card>`;
     this._cacheEls();
+    for (const [id, metric] of [["col-soil", "soil"], ["col-temp", "temperature"], ["col-hum", "humidity"]]) {
+      const col = this.shadowRoot.getElementById(id);
+      if (!col) continue;
+      col.addEventListener("click", () => this._toggleTrend(metric));
+      col.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); this._toggleTrend(metric); }
+      });
+    }
+  }
+
+  // ── Trend panel ──
+  _trendEntity(metric) { return this._entities[metric === "soil" ? "soil_moisture" : metric]; }
+  _trendOpts(metric, keepPeriod) {
+    const eid = this._trendEntity(metric);
+    const unitAttr = this._hass?.states[eid]?.attributes?.unit_of_measurement;
+    // Plain hex colours: they end up in SVG presentation attributes, where
+    // var() is not parsed.
+    const base = {
+      soil:        { color: "#2ecc8b", unit: unitAttr || "%",  decimals: 0, clamp: true },
+      temperature: { color: "#f9a825", unit: unitAttr || "°C", decimals: 1, clamp: false },
+      humidity:    { color: "#4a90d9", unit: unitAttr || "%",  decimals: 0, clamp: true },
+    }[metric];
+    return { ...base, keepPeriod };
+  }
+  _toggleTrend(metric) {
+    if (this._isOffline() || !this._el.panelWrap) return;
+    if (this._trendMetric === metric) { this._closeTrend(); return; }
+    const wasOpen = this._trendMetric !== null;
+    this._trendMetric = metric;
+    if (!this._panel) {
+      this._panel = document.createElement("sensor-trend-panel");
+      this._el.panelWrap.appendChild(this._panel);
+    }
+    this._el.panelWrap.hidden = false;
+    this._syncColSel();
+    this._panel.setup(this._hass, this._trendEntity(metric), this._trendOpts(metric, wasOpen));
+  }
+  _closeTrend() {
+    this._trendMetric = null;
+    if (this._el.panelWrap) this._el.panelWrap.hidden = true;
+    this._syncColSel();
+  }
+  _syncColSel() {
+    const map = { soil: this._el.colSoil, temperature: this._el.colTemp, humidity: this._el.colHum };
+    for (const [m, el] of Object.entries(map)) {
+      if (!el) continue;
+      el.classList.toggle("sel", this._trendMetric === m);
+      el.setAttribute("aria-expanded", this._trendMetric === m ? "true" : "false");
+    }
   }
 
   _cacheEls() {
@@ -504,6 +582,10 @@ ha-card{overflow:hidden}
       icon: r.getElementById("icon"),
       iconSvg: r.querySelector("#icon svg"),
       colsView: r.getElementById("cols-view"),
+      colSoil: r.getElementById("col-soil"),
+      colTemp: r.getElementById("col-temp"),
+      colHum: r.getElementById("col-hum"),
+      panelWrap: r.getElementById("panel-wrap"),
       offBadge: r.getElementById("off-badge"),
       offBanner: r.getElementById("off-banner"),
       vSoil: r.getElementById("v-soil"),
@@ -528,8 +610,10 @@ ha-card{overflow:hidden}
     if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
 
     this._txt(el.upd, this._updatedText());
+    if (this._panel) this._panel.hass = this._hass;
 
     if (offline) {
+      if (this._trendMetric !== null) this._closeTrend();
       // Dim the header icon to gray when offline so the visual cue carries.
       if (el.icon) el.icon.style.background = "var(--bd)";
       if (el.iconSvg) el.iconSvg.setAttribute("fill", "var(--th)");
@@ -586,4 +670,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for soil moisture, temperature and air humidity sensors";
   window.customCards.push({ type: "soil-moisture-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c SOIL-MOISTURE-CARD %c v1.5.1 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c SOIL-MOISTURE-CARD %c v1.6.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

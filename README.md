@@ -22,9 +22,9 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves + bundled ZHA quirks | v2.11.1 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves + bundled ZHA quirks | v2.12.0 |
 | `irrigation-control-card` | Lovelace card driving the services above | v2.9.1 |
-| `soil-moisture-card` | Card for soil moisture + temperature (+ optional air humidity) sensors | v1.5.1 |
+| `soil-moisture-card` | Card for soil moisture + temperature (+ optional air humidity) sensors, with a tap-to-open trend panel (day / week / month) | v1.6.0 |
 
 ## Installation (HACS)
 
@@ -200,6 +200,7 @@ Compact card for Tuya soil probes — soil moisture, temperature and air humidit
 
 - **Configurable thresholds**: optimal (green) and acceptable (yellow) ranges per plant; outside acceptable = red.
 - **Auto-discovery** from a single `_soil_moisture` sensor; **visual editor** with threshold config; **battery indicator**.
+- **Trend panel**: tap a reading (soil, temperature or air) to open a section under the readings — same look as the energy-statistics panel of the [Tuya ZHA power-switch card](https://github.com/SimoneAvogadro/zha-tuya-quirks). **Day** shows the recorded trend of the value; **Week** and **Month** show two lines, the daily min and max, with a band between them. The header gives the period's min – max and mean; tap a point (or a day) to read it, `◀` / `▶` step through periods. Tap the open column to close it, another column to switch metric. Data comes straight from the recorder — raw history for the day view (falls back to hourly statistics beyond the recorder's retention), long-term daily statistics for week / month — so nothing needs to be configured.
 
 ```yaml
 type: custom:soil-moisture-card
@@ -233,7 +234,7 @@ acc_max: 80
 ## Technical details
 
 - **Integration**: pure-Python `custom_components/tuya_irrigation/`, no external dependencies. Uses `async_register_static_paths` + `StaticPathConfig` (HA ≥ 2024.1).
-- **Cards**: pure `HTMLElement` with Shadow DOM (no LitElement). Bundle concatenated by `bash build.sh`.
+- **Cards**: pure `HTMLElement` with Shadow DOM (no LitElement). Bundle concatenated by `bash build.sh`. `src/sensor-trend-panel.js` is **not a card**: it is the `<sensor-trend-panel>` element the soil-moisture card opens under its readings, reusable by other cards.
 - **Theming**: HA CSS variables. **Localization**: IT / EN / ZH via `localStorage.selectedLanguage`.
 
 ```bash

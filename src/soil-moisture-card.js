@@ -146,6 +146,11 @@ const SM_SUFFIXES = {
   temperature:   { domain: "sensor", suffix: "_temperature" },
   humidity:      { domain: "sensor", suffix: "_humidity" },
   battery:       { domain: "sensor", suffix: "_battery" },
+  // Zigbee signal quality (optional, see src/signal-quality.js): ZHA lqi /
+  // rssi are diagnostic entities disabled by default; linkquality is Z2M's.
+  lqi:           { domain: "sensor", suffix: "_lqi" },
+  linkquality:   { domain: "sensor", suffix: "_linkquality" },
+  rssi:          { domain: "sensor", suffix: "_rssi" },
 };
 // `humidity` and `battery` are optional: 2-in-1 soil probes have no air channel.
 const SM_REQUIRED = ["soil_moisture", "temperature"];
@@ -441,6 +446,7 @@ class SoilMoistureCard extends HTMLElement {
     const hum = this._nv(e.humidity);
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
+    const sq = sqRead(this._hass, e);
     const hasHum = this._hass.states[e.humidity] !== undefined;
     // "N min ago" sits in the last column on the same row as the soil bar,
     // so it adds no height to the card.
@@ -466,6 +472,7 @@ ha-card{overflow:hidden}
 .bs{width:18px;height:10px;border:1.2px solid var(--th);border-radius:2px;position:relative;overflow:hidden}
 .bf{position:absolute;inset:1px;background:var(--sm-green);border-radius:1px}
 .bp{width:2px;height:5px;background:var(--th);border-radius:0 1px 1px 0;margin-left:-1px}
+${sqCss()}
 .badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;background:rgba(226,85,85,.15);color:var(--danger)}
 .cb{padding:6px 16px 14px}
 .cols{display:grid;grid-template-columns:repeat(${hasHum ? 3 : 2},1fr);gap:10px;text-align:center}
@@ -491,6 +498,7 @@ ha-card{overflow:hidden}
       <span class="tt">${name}</span>
     </div>
     <div class="hr" id="hr">
+      ${sq.present ? sqHtml(sq, offline) : ""}
       ${hasBatt ? `<div class="bt" id="bt-wrap" style="display:${offline?"none":"flex"}"><div class="bs"><div class="bf" style="width:${Math.min(100,batt)}%"></div></div><div class="bp"></div><span class="batt-pct">${Math.round(batt)}%</span></div>` : ""}
       <span class="badge" id="off-badge" style="display:${offline?"inline-block":"none"}">${t("offline")}</span>
     </div>
@@ -579,6 +587,7 @@ ha-card{overflow:hidden}
       bf: r.querySelector(".bf"),
       battPct: r.querySelector(".batt-pct"),
       battWrap: r.getElementById("bt-wrap"),
+      sqWrap: r.getElementById("sq-wrap"),
       icon: r.getElementById("icon"),
       iconSvg: r.querySelector("#icon svg"),
       colsView: r.getElementById("cols-view"),
@@ -608,6 +617,7 @@ ha-card{overflow:hidden}
     if (el.offBanner) el.offBanner.style.display = offline ? "flex" : "none";
     if (el.offBadge) el.offBadge.style.display = offline ? "inline-block" : "none";
     if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
+    sqApply(el.sqWrap, sqRead(this._hass, e), offline);
 
     this._txt(el.upd, this._updatedText());
     if (this._panel) this._panel.hass = this._hass;

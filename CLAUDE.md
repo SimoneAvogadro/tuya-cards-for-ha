@@ -35,9 +35,11 @@ tuya-cards-for-ha/
 ├── src/                          ← card sources, one file per card (+ shared panels)
 │   ├── irrigation-control-card.js
 │   ├── sensor-trend-panel.js     ← NOT a card: <sensor-trend-panel> element (day/week/month trend chart)
+│   ├── signal-quality.js         ← NOT a card: shared Zigbee signal icon helpers (sq* functions) for both card headers
 │   └── soil-moisture-card.js
 ├── tests/
-│   └── sensor-trend-panel.test.js ← pure-logic tests (node:vm, no framework)
+│   ├── sensor-trend-panel.test.js ← pure-logic tests (node:vm, no framework)
+│   └── signal-quality.test.js    ← thresholds + entity resolution of the signal icon
 ├── tuya-cards.js                 ← built bundle at repo root (DO NOT edit)
 ├── build.sh                      ← concatenates src/*.js → tuya-cards.js + copies into integration www/
 ├── hacs.json                     ← HACS manifest (integration type detected automatically)
@@ -110,6 +112,7 @@ Each finalized run also fires the **un-namespaced `irrigation_completed`** event
 - **Irrigation card calls the integration's services**, never the underlying `number.set_value` + `switch.turn_on` sequence directly. A graceful banner appears if the integration is missing.
 - **Switch is the single source of truth** for the running state (badge + play/stop button). The progress bar is **device-derived**, not a client `setInterval` counter: Tempo uses `end_time − start_time`, Liters uses `summation_delivered / target` (the integration writes mode/target so these are populated — see Integration services). A 1 s render tick (`_startTick`) only re-renders; values are recomputed from device state each time, so the bar survives a browser refresh, reflects automation-started runs, and never drifts. The `_startPressedAt` stale-`start_time` guard covers the ~1.5 s open delay; the "Avvio…" overlay (`_beginStarting`, 10 s watchdog) covers it visually.
 - **Trend panel (soil-moisture-card)**: tapping a reading column opens `<sensor-trend-panel>` (`src/sensor-trend-panel.js`) under the readings, styled like the energy-statistics panel of `power-switch-card` in `zha-tuya-quirks`. Day = raw `history/history_during_period` line (hourly-mean statistics fallback beyond recorder retention); Week/Month = daily min/max lines + band from `recorder/statistics_during_period` (`period: "day"`, `types: [min,max,mean]`). The panel is a plain element with `setup(hass, entityId, {color, unit, decimals, clamp, keepPeriod})`, a `hass` setter and `refreshIfCurrent()` (called from the card's 60 s tick, self-rate-limited to 15 min). Its SVG is drawn in pixel coordinates (ResizeObserver) so strokes never distort; colours are plain hex because `var()` is not parsed in SVG presentation attributes. **Every top-level identifier in a shared panel is prefixed** (`stp`/`STP_`) because `build.sh` concatenates all of `src/*.js` into one module scope. Spec: `docs/superpowers/specs/2026-09-08-sensor-trend-panel-design.md`.
+- **Signal quality icon** (both cards): `src/signal-quality.js` resolves the optional `lqi` / `linkquality` / `rssi` suffixes (ZHA diagnostic entities, disabled by default; Z2M `linkquality`) and renders WiFi-style arcs left of the battery. LQI (0–255) is preferred, RSSI (dBm) is the fallback; 4 levels, level 1 red, level 0 (present but unavailable) all-dim, hidden with the battery when offline, no icon when none of the entities exists. Each card lists the three suffixes in its own `SUFFIXES` table and calls `sqRead` / `sqHtml` at `_createDOM` and `sqApply` in `_update`. The helper holds only **function declarations** (no top-level `const`): it is concatenated *after* `irrigation-control-card.js`, so a `const` would still be in its temporal dead zone when that card builds its suffix table.
 - **History list**: the expanded "last irrigation" view nests a second `+` that lists past runs from `sensor.<prefix>_irrigation_history`'s `runs` attribute; level-1 stays live device-DP-driven for in-run monitoring. `history` is a **non-required** suffix, so the card degrades gracefully (second `+` hidden) when the integration hasn't created the sensor. See [Irrigation history (run log)](#irrigation-history-run-log).
 
 ## Adding a new card
@@ -140,10 +143,11 @@ Override semantics: zigpy uses last-registered-wins for the same `(manufacturer,
 
 ## Testing
 
-Pure-logic tests for the trend panel (period arithmetic, bucket filling, history parsing, axis ticks) run without any dependency:
+Pure-logic tests for the trend panel (period arithmetic, bucket filling, history parsing, axis ticks) and for the signal icon (thresholds, entity resolution) run without any dependency:
 
 ```bash
 TZ=Europe/Rome node tests/sensor-trend-panel.test.js
+node tests/signal-quality.test.js
 ```
 
 For a visual check without HA, render the bundle in the Playwright Chromium binary (`~/.cache/ms-playwright/chromium_headless_shell-*/…/chrome-headless-shell --headless --screenshot=… --virtual-time-budget=3000 <url>`) from a small harness page that defines a mock `hass` (`states` + `callWS` returning synthetic history/statistics) and serves it over `python3 -m http.server` (module scripts can't load from `file://`).

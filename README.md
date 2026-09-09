@@ -167,7 +167,7 @@ Compact card for the GiEX valve — replaces a handful of scattered entities wit
 - **Device-truth progress bar**: derived from the device's own telemetry, not a client timer. Tempo uses `irrigation_end_time − irrigation_start_time`; Liters uses `summation_delivered / target`. Survives a browser refresh, stays in sync across tabs, never drifts, and shows progress even for automation-started runs.
 - **History**: the idle row shows the last run (start time, duration, liters) and a chevron that expands a scrollable list of past runs — start time, duration, liters and an outcome dot — read from `sensor.<prefix>_irrigation_history`. Same layout as the Sonoff valve card in [zha-sonoff-quirks](https://github.com/simoneavogadro/zha-sonoff-quirks). See [Irrigation history](#irrigation-history).
 - **Auto-discovery** from a single switch entity; **visual editor** lists only switches with all companion entities.
-- **Battery indicator**, **integration-missing banner**, **theme-aware** (HA CSS variables).
+- **Battery indicator** with a **Zigbee signal icon** to its left (WiFi-style arcs, see [Signal quality icon](#signal-quality-icon)), **integration-missing banner**, **theme-aware** (HA CSS variables).
 
 The cycles/interval scheduling UI is hidden for now; the code is preserved and will return once the integration gains a scheduling service.
 
@@ -191,6 +191,7 @@ name: Irrigatore 31  # optional, defaults to friendly_name
 | start_time | sensor | `_irrigation_start_time` | No |
 | end_time | sensor | `_irrigation_end_time` | No |
 | history | sensor | `_irrigation_history` | No |
+| lqi / linkquality / rssi | sensor | `_lqi`, `_linkquality`, `_rssi` | No (signal icon) |
 
 ---
 
@@ -199,7 +200,7 @@ name: Irrigatore 31  # optional, defaults to friendly_name
 Compact card for Tuya soil probes — soil moisture, temperature and air humidity in a three-column layout (two columns on 2-in-1 probes without an air channel), with a colored progress bar for soil moisture.
 
 - **Configurable thresholds**: optimal (green) and acceptable (yellow) ranges per plant; outside acceptable = red.
-- **Auto-discovery** from a single `_soil_moisture` sensor; **visual editor** with threshold config; **battery indicator**.
+- **Auto-discovery** from a single `_soil_moisture` sensor; **visual editor** with threshold config; **battery indicator** with a **Zigbee signal icon** to its left (see [Signal quality icon](#signal-quality-icon)).
 - **Trend panel**: tap a reading (soil, temperature or air) to open a section under the readings — same look as the energy-statistics panel of the [Tuya ZHA power-switch card](https://github.com/SimoneAvogadro/zha-tuya-quirks). **Day** shows the recorded trend of the value; **Week** and **Month** show two lines, the daily min and max, with a band between them. The header gives the period's min – max and mean; tap a point (or a day) to read it, `◀` / `▶` step through periods. Tap the open column to close it, another column to switch metric. Data comes straight from the recorder — raw history for the day view (falls back to hourly statistics beyond the recorder's retention), long-term daily statistics for week / month — so nothing needs to be configured.
 
 ```yaml
@@ -228,6 +229,25 @@ acc_max: 80
 | temperature | sensor | `_temperature` | Yes |
 | humidity | sensor | `_humidity` | Yes |
 | battery | sensor | `_battery` | No |
+| lqi / linkquality / rssi | sensor | `_lqi`, `_linkquality`, `_rssi` | No (signal icon) |
+
+---
+
+## Signal quality icon
+
+Both cards show a small WiFi-style icon (three arcs + dot) to the left of the battery when the device exposes a signal-quality entity. Nothing to configure — the icon appears as soon as the entity exists and disappears (with the battery) when the device is offline.
+
+- **ZHA**: `sensor.<prefix>_lqi` and `sensor.<prefix>_rssi` are *diagnostic* entities, **disabled by default**. Enable at least one from the device page (Settings → Devices & Services → the device → "+N entities not shown" → enable). LQI is preferred; RSSI is used only when it is the sole one enabled.
+- **Zigbee2MQTT**: `sensor.<prefix>_linkquality` is created automatically.
+
+| Arcs lit | LQI (0–255) | RSSI (fallback) |
+|---|---|---|
+| 4 | ≥ 200 | ≥ −60 dBm |
+| 3 | ≥ 150 | ≥ −70 dBm |
+| 2 | ≥ 100 | ≥ −80 dBm |
+| 1 (red) | < 100 | < −80 dBm |
+
+Hovering the icon shows the raw values (`LQI 120 · RSSI -70 dBm`). Zigbee values are per-hop, so a valve behind a router reports the quality of the link to that router, not to the coordinator.
 
 ---
 

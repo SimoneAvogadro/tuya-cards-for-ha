@@ -197,6 +197,11 @@ const SUFFIXES = {
   start_time:    { domain: "sensor", suffix: "_irrigation_start_time" },
   end_time:      { domain: "sensor", suffix: "_irrigation_end_time" },
   history:       { domain: "sensor", suffix: "_irrigation_history" },
+  // Zigbee signal quality (optional, see src/signal-quality.js): ZHA lqi /
+  // rssi are diagnostic entities disabled by default; linkquality is Z2M's.
+  lqi:           { domain: "sensor", suffix: "_lqi" },
+  linkquality:   { domain: "sensor", suffix: "_linkquality" },
+  rssi:          { domain: "sensor", suffix: "_rssi" },
 };
 const REQUIRED = ["mode", "target", "cycles", "interval", "last_duration", "summation"];
 
@@ -862,6 +867,7 @@ class IrrigationControlCard extends HTMLElement {
     const isOn = this._isOn();
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
+    const sq = sqRead(this._hass, e);
     const cyc = this._nv(e.cycles); const schedOn = cyc > 1;
     const ivS = this._nv(e.interval);
     const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
@@ -903,6 +909,7 @@ ha-card{overflow:hidden}
 .bs{width:18px;height:10px;border:1.2px solid var(--th);border-radius:2px;position:relative;overflow:hidden}
 .bf{position:absolute;inset:1px;background:var(--accent);border-radius:1px}
 .bp{width:2px;height:5px;background:var(--th);border-radius:0 1px 1px 0;margin-left:-1px}
+${sqCss()}
 .badge{font-size:11px;font-weight:500;padding:3px 10px;border-radius:20px;transition:all .3s}
 .badge.off{background:var(--bd);color:var(--th)}
 .badge.active{background:var(--accent-dim);color:var(--accent)}
@@ -1009,6 +1016,7 @@ input[type=number]{-moz-appearance:textfield}
     </div>
     <div class="hr">
       <span class="${bCls}">${bTxt}</span>
+      ${sq.present ? sqHtml(sq, offline) : ""}
       ${hasBatt ? `<div class="bt" id="bt-wrap" style="display:${offline?"none":"flex"}"><div class="bs"><div class="bf" style="width:${Math.min(100,batt)}%"></div></div><div class="bp"></div><span class="batt-pct">${Math.round(batt)}%</span></div>` : ""}
     </div>
   </div>
@@ -1079,7 +1087,7 @@ input[type=number]{-moz-appearance:textfield}
     const q = (sel) => r.querySelector(sel);
     this._el = {
       tt: q(".tt"), bf: q(".bf"), battPct: q(".batt-pct"), badge: q(".badge"),
-      battWrap: $("bt-wrap"),
+      battWrap: $("bt-wrap"), sqWrap: $("sq-wrap"),
       bl: $("bl"), bt: $("bt"), bm: $("bm"),
       ipLitri: $("ip-litri"), ipTempo: $("ip-tempo"),
       vl: $("vl"), gl: $("gl"),
@@ -1144,6 +1152,7 @@ input[type=number]{-moz-appearance:textfield}
     this._txt(el.tt, name);
     const offline = this._isOffline();
     if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
+    sqApply(el.sqWrap, sqRead(this._hass, e), offline);
     if (!offline) {
       if (el.bf) el.bf.style.width = Math.min(100, batt) + "%";
       if (el.battPct) this._txt(el.battPct, Math.round(batt) + "%");

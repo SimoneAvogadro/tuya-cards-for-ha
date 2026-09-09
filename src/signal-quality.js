@@ -72,24 +72,31 @@ function sqTitle(info) {
 // currentColor so the wrapper's `color` drives it; CSS on the wrapper's
 // data-level lights up the arcs.
 function sqSvg() {
-  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
     `<path class="a4" d="M2 8.82a15 15 0 0 1 20 0"/>` +
     `<path class="a3" d="M5 12.86a10 10 0 0 1 14 0"/>` +
     `<path class="a2" d="M8.5 16.43a5 5 0 0 1 7 0"/>` +
-    `<circle class="a1" cx="12" cy="20" r="1.4" fill="currentColor" stroke="none"/>` +
+    `<circle class="a1" cx="12" cy="20" r="1.6" fill="currentColor" stroke="none"/>` +
     `</svg>`;
 }
 
 // CSS for the `.sq` wrapper, embedded by each card next to its battery rules.
-// Arcs above the current level stay faint; level 1 turns the whole icon red.
+// Unlit arcs are drawn opaque in the bar-track grey (--bd, the empty part of
+// the soil-moisture bar) rather than faded, so the whole glyph keeps its
+// shape; lit arcs take the wrapper's currentColor (--th, the same grey as the
+// column labels). Level 1 turns the lit part red.
 function sqCss() {
   return `.sq{display:flex;align-items:center;color:var(--th)}
 .sq svg{display:block}
-.sq .a1,.sq .a2,.sq .a3,.sq .a4{opacity:.22}
+.sq .a2,.sq .a3,.sq .a4{stroke:var(--bd)}
+.sq .a1{fill:var(--bd)}
 .sq[data-level="1"] .a1,
-.sq[data-level="2"] .a1,.sq[data-level="2"] .a2,
-.sq[data-level="3"] .a1,.sq[data-level="3"] .a2,.sq[data-level="3"] .a3,
-.sq[data-level="4"] .a1,.sq[data-level="4"] .a2,.sq[data-level="4"] .a3,.sq[data-level="4"] .a4{opacity:1}
+.sq[data-level="2"] .a1,
+.sq[data-level="3"] .a1,
+.sq[data-level="4"] .a1{fill:currentColor}
+.sq[data-level="2"] .a2,
+.sq[data-level="3"] .a2,.sq[data-level="3"] .a3,
+.sq[data-level="4"] .a2,.sq[data-level="4"] .a3,.sq[data-level="4"] .a4{stroke:currentColor}
 .sq[data-level="1"]{color:var(--danger)}`;
 }
 

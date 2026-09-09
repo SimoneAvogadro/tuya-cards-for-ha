@@ -9,6 +9,11 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * v2.10.0 — Zigbee signal-quality icon (WiFi-style arcs) to the left of the
+ *          battery when the device exposes sensor.<prefix>_lqi / _rssi (ZHA,
+ *          diagnostic, disabled by default) or _linkquality (Z2M). LQI first,
+ *          RSSI as fallback; 4 levels, the lowest in red; hidden with the
+ *          battery when offline. Shared helper in src/signal-quality.js.
  * v2.9.1 — The date in the run rows collapses on a narrow card. Runs from the
  *          last few days now carry their weekday: "Lunedì 24 ago 05:30" where
  *          there is room, "Lunedì 05:30" where there isn't. The start time
@@ -1280,7 +1285,7 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.9.1 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.10.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
 // --- sensor-trend-panel.js ---
 /**
  * Sensor Trend Panel for Home Assistant
@@ -2094,6 +2099,11 @@ function sqApply(wrap, info, hidden) {
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
+ * v1.7.0 — Zigbee signal-quality icon (WiFi-style arcs) to the left of the
+ *          battery when the probe exposes sensor.<prefix>_lqi / _rssi (ZHA,
+ *          diagnostic, disabled by default) or _linkquality (Z2M). LQI first,
+ *          RSSI as fallback; 4 levels, the lowest in red; hidden with the
+ *          battery when offline. Shared helper in src/signal-quality.js.
  * v1.6.0 — Trend panel. Tapping a reading (soil / temperature / air) opens a
  *          section under the readings, styled like the energy-statistics
  *          panel of power-switch-card (zha-tuya-quirks): Day = the recorded
@@ -2773,4 +2783,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for soil moisture, temperature and air humidity sensors";
   window.customCards.push({ type: "soil-moisture-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c SOIL-MOISTURE-CARD %c v1.6.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c SOIL-MOISTURE-CARD %c v1.7.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

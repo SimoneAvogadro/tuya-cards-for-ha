@@ -68,5 +68,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "zha_layer_missing": {
+      "title": "缺少 Tuya ZHA 集成",
+      "description": "检测到 ZHA 灌溉阀，但未安装或未加载 **Tuya ZHA** 集成（`zha_tuya_quirks`）。它提供 GiEX QT06 的 quirk（正确的时钟纪元和本地时间的开始/结束时间）、每次灌溉前的时钟推送，以及信号弱的电池阀的保活。没有它灌溉仍可运行，但阀门的开始/结束时间会漂移，信号弱的电池阀可能变为不可用。\n\n请通过 HACS 安装（自定义仓库 `SimoneAvogadro/zha-tuya-quirks`，类别为集成），在“设置 → 设备与服务”中添加，然后重启 Home Assistant。集成加载后此问题会自动消失。"
+    }
   }
 }

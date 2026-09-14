@@ -68,5 +68,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "zha_layer_missing": {
+      "title": "Integrazione Tuya ZHA mancante",
+      "description": "È stata rilevata una valvola di irrigazione ZHA, ma l'integrazione **Tuya ZHA** (`zha_tuya_quirks`) non è installata o non è caricata. Fornisce il quirk della GiEX QT06 (epoca dell'orologio corretta e ora di inizio/fine in ora locale), l'invio dell'ora prima di ogni irrigazione e il keep-alive per le valvole a batteria con segnale debole. L'irrigazione funziona comunque, ma le ore di inizio/fine della valvola saranno sbagliate e una valvola a batteria con segnale debole può risultare non disponibile.\n\nInstallala da HACS (repository personalizzato `SimoneAvogadro/zha-tuya-quirks`, categoria Integrazione), aggiungila in Impostazioni → Dispositivi e servizi e riavvia Home Assistant. Questa segnalazione scompare da sola quando l'integrazione è caricata."
+    }
   }
 }

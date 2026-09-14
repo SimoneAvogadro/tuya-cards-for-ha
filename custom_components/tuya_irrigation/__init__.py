@@ -24,6 +24,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -51,15 +52,16 @@ from .const import (
     SUMMATION_SUFFIX,
     URL_BASE,
     VERSION,
+    ZHA_LAYER_DOMAIN,
+    ZHA_LAYER_ISSUE_ID,
+    ZHA_LAYER_KEEPALIVE_SERVICE,
+    ZHA_LAYER_TIME_SERVICE,
     running_signal,
 )
 
-# Import for side-effect: registers bundled ZHA quirks into zigpy's global
-# registry. Needs to happen at module load time so ZHA picks them up before
-# enumerating devices.
-from . import quirks  # noqa: F401, E402
 from .discovery import (
     device_has_battery,
+    device_is_zha,
     find_valve_devices,
     valve_switch_for_device,
 )
@@ -335,97 +337,96 @@ async def _async_register_lovelace_resource(
             )
 
 
-def _resolve_zha_device(hass: HomeAssistant, switch_entity: str):
-    """Resolve a valve switch entity to its zha-lib device object, or None.
+def _zha_layer_has(hass: HomeAssistant, service: str) -> bool:
+    """Whether the ZHA layer (zha_tuya_quirks) currently offers `service`."""
+    return hass.services.has_service(ZHA_LAYER_DOMAIN, service)
 
-    Walks entity registry → device registry → Zigbee IEEE → ZHA gateway.
-    Imports lazily so the integration keeps loading when ZHA is absent; a
-    missing link returns None with a debug log, anything unexpected raises
-    (callers wrap in their own best-effort guard).
+
+async def _async_call_zha_layer(
+    hass: HomeAssistant, service: str, switch_entity: str
+) -> bool:
+    """Call a zha_tuya_quirks radio helper service for a valve, best-effort.
+
+    The radio-level work (Tuya MCU time push, Basic-cluster keep-alive read)
+    lives in the ZHA-specific `zha_tuya_quirks` integration, which exposes it
+    as services. This integration holds no ZHA/zigpy code: it only asks. When
+    that integration is missing the call is skipped silently (a repair issue
+    tells the user, see `_async_check_zha_layer`); when it fails, we log and
+    move on — neither must ever block or fail irrigation.
+
+    Returns True when the service ran without raising.
     """
-    from homeassistant.components.zha.helpers import get_zha_gateway
-    from homeassistant.helpers import device_registry as dr
-    from homeassistant.helpers import entity_registry as er
-    from zigpy.types import EUI64
-
-    ent_reg = er.async_get(hass)
-    entry = ent_reg.async_get(switch_entity)
-    if entry is None or entry.device_id is None:
-        _LOGGER.debug("ZHA resolve: no registry entry for %s", switch_entity)
-        return None
-    dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get(entry.device_id)
-    if device is None:
-        _LOGGER.debug("ZHA resolve: no device for %s", switch_entity)
-        return None
-    ieee_str = next(
-        (c[1] for c in device.connections if c[0] == dr.CONNECTION_ZIGBEE),
-        None,
-    )
-    if ieee_str is None:
-        ieee_str = next(
-            (i[1] for i in device.identifiers if i[0] == "zha"), None
+    if not _zha_layer_has(hass, service):
+        _LOGGER.debug(
+            "%s.%s not available; skipping for %s", ZHA_LAYER_DOMAIN, service, switch_entity
         )
-    if ieee_str is None:
-        _LOGGER.debug("ZHA resolve: no IEEE for %s", switch_entity)
-        return None
-
-    gateway = get_zha_gateway(hass)
-    return gateway.get_device(EUI64.convert(ieee_str))
+        return False
+    try:
+        await hass.services.async_call(
+            ZHA_LAYER_DOMAIN, service, {"entity_id": switch_entity}, blocking=True
+        )
+    except Exception as err:  # noqa: BLE001 - best-effort, never raise
+        _LOGGER.warning(
+            "%s.%s for %s failed (non-fatal): %s",
+            ZHA_LAYER_DOMAIN, service, switch_entity, err,
+        )
+        return False
+    return True
 
 
 async def _async_push_device_time(hass: HomeAssistant, switch_entity: str) -> None:
     """Best-effort: push the current time to a Tuya valve's MCU before opening it.
 
     The GiEX RTC drifts and the device never requests a sync, so its
-    start/end-time stamps are wrong. We reach the device's zigpy 0xEF00 cluster
-    via the ZHA gateway and call handle_set_time_request(0), which emits Tuya
-    command 0x24 with the current time using the quirk's 2000 epoch.
-
-    Fully guarded: any failure (ZHA absent, device not found, API drift) is
-    logged and swallowed — pushing the time must never block or fail irrigation.
+    start/end-time stamps are wrong unless the clock is pushed right before a
+    run. Delegated to `zha_tuya_quirks.push_device_time` (Tuya command 0x24
+    with the quirk's 2000 epoch). Never blocks or fails irrigation.
     """
-    try:
-        zha_device = _resolve_zha_device(hass, switch_entity)
-        if zha_device is None:
-            return
-        cluster = zha_device.device.endpoints[1].in_clusters[0xEF00]
-        cluster.handle_set_time_request(0)
-        _LOGGER.info(
-            "Pushed device time to %s (ieee %s)", switch_entity, zha_device.ieee
-        )
-    except Exception as err:  # noqa: BLE001 - best-effort, never block irrigation
-        _LOGGER.warning("Time push to %s failed (non-fatal): %s", switch_entity, err)
+    if await _async_call_zha_layer(hass, ZHA_LAYER_TIME_SERVICE, switch_entity):
+        _LOGGER.debug("Pushed device time to %s", switch_entity)
 
 
 async def _async_keepalive_poll(hass: HomeAssistant, switch_entity: str) -> None:
-    """Best-effort: read a real attribute off the valve so ZHA refreshes 'last seen'.
+    """Best-effort: poke a valve over the air so ZHA refreshes its 'last seen'.
 
     Battery valves (e.g. GiEX QT06) are sleepy Zigbee end devices: on a weak link
     their spontaneous reports stop reaching the coordinator and ZHA marks them
     'unavailable' after consider_unavailable_battery (6 h default), even though
-    the valve still works. An entity-level poll (homeassistant.update_entity on
-    the switch) does NOT reach the radio here: the quirk's On/Off cluster is a
-    LocalDataCluster answered from cache (verified live — no frame is emitted).
-    So we read the Basic cluster (0x0000, untouched by the quirk) at the zigpy
-    level with allow_cache=False — a genuine over-the-air read, the same shape
-    ZHA's own availability pings use. ANY reply, even an unsupported-attribute
-    status, is a received frame and refreshes last_seen. zigpy already applies
-    its extended timeout for sleepy end devices, so no extra wait is needed.
-
-    Fully guarded: any failure is logged and swallowed — keep-alive must never raise.
+    the valve still works. Delegated to `zha_tuya_quirks.keepalive_poll` (a
+    genuine Basic-cluster read; any reply refreshes last_seen). Never raises.
     """
-    try:
-        zha_device = _resolve_zha_device(hass, switch_entity)
-        if zha_device is None:
-            return
-        basic = zha_device.device.endpoints[1].in_clusters[0x0000]
-        await basic.read_attributes(["app_version"], allow_cache=False)
+    if await _async_call_zha_layer(hass, ZHA_LAYER_KEEPALIVE_SERVICE, switch_entity):
         _LOGGER.debug("Keep-alive read ok for %s", switch_entity)
-    except Exception as err:  # noqa: BLE001 - best-effort, never raise
-        _LOGGER.debug(
-            "Keep-alive read to %s failed (non-fatal): %s", switch_entity, err
+
+
+@callback
+def _async_check_zha_layer(hass: HomeAssistant) -> bool:
+    """Raise (or clear) the repair issue asking for the zha_tuya_quirks integration.
+
+    The GiEX quirk (clock epoch, timezone of start/end stamps) and the two radio
+    helpers moved to the ZHA-specific `zha_tuya_quirks` integration. A user who
+    has a ZHA valve but not that integration silently loses them: the valve
+    still irrigates, but its time stamps drift and a weak-link battery valve
+    can go unavailable. Flag it once, as a persistent repair issue, and clear
+    it as soon as the services show up. Returns whether the layer is present.
+    """
+    present = _zha_layer_has(hass, ZHA_LAYER_TIME_SERVICE)
+    needs_layer = not present and any(
+        device_is_zha(hass, device_id) for device_id in find_valve_devices(hass)
+    )
+    if needs_layer:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            ZHA_LAYER_ISSUE_ID,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ZHA_LAYER_ISSUE_ID,
+            learn_more_url="https://github.com/SimoneAvogadro/zha-tuya-quirks",
         )
+    else:
+        ir.async_delete_issue(hass, DOMAIN, ZHA_LAYER_ISSUE_ID)
+    return present
 
 
 async def _async_run_keepalive(
@@ -444,6 +445,9 @@ async def _async_run_keepalive(
     callback, and it bails out if the integration is unloaded mid-sweep.
     """
     try:
+        if not _async_check_zha_layer(hass):
+            _LOGGER.debug("Keep-alive sweep skipped: ZHA layer not available")
+            return
         first = True
         for device_id in find_valve_devices(hass):
             data = hass.data.get(DOMAIN)

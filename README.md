@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
-Home Assistant custom **integration** + two **Lovelace cards** for specific Tuya Zigbee devices (ZHA / Zigbee2MQTT). The integration adds reliable server-side irrigation services and bundled ZHA quirks; each supported device gets a compact dedicated card.
+Home Assistant custom **integration** + two **Lovelace cards** for specific Tuya Zigbee devices (ZHA / Zigbee2MQTT). The integration adds reliable server-side irrigation services; each supported device gets a compact dedicated card. Everything ZHA-specific (the device quirks, the clock push before a run, the keep-alive) lives in the companion [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks) integration — install both for a ZHA valve.
 
 ## Supported devices
 
@@ -10,11 +10,11 @@ This project targets two devices in particular — and ships a dedicated Lovelac
 
 | Device | Exact models | What you get |
 |---|---|---|
-| **GiEX QT06 smart irrigation valve** | TS0601 — `_TZE200_a7sghmms`, `_TZE204_a7sghmms`, `_TZE200_7ytb3h8u`, `_TZE204_7ytb3h8u`, `_TZE284_7ytb3h8u` | `irrigation_by_seconds` / `irrigation_by_liters` services + `irrigation-control-card` + a quirk that fixes clock-sync and start/end-time stamps |
-| **HOBEIAN ZG-303Z 3-in-1 soil sensor** (Excellux) | `HOBEIAN ZG-303Z` | `soil-moisture-card` (soil moisture + temperature + air humidity) + a DP-mapping quirk |
+| **GiEX QT06 smart irrigation valve** | TS0601 — `_TZE200_a7sghmms`, `_TZE204_a7sghmms`, `_TZE200_7ytb3h8u`, `_TZE204_7ytb3h8u`, `_TZE284_7ytb3h8u` | `irrigation_by_seconds` / `irrigation_by_liters` services + `irrigation-control-card` (+ a quirk that fixes clock-sync and start/end-time stamps, from [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks)) |
+| **HOBEIAN ZG-303Z 3-in-1 soil sensor** (Excellux) | `HOBEIAN ZG-303Z` | `soil-moisture-card` (soil moisture + temperature + air humidity) (+ a DP-mapping quirk, from [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks)) |
 | **Tuya 2-in-1 soil probe** (no air channel) | TS0601 — `_TZE2841000000_tgrzpqf4` | `soil-moisture-card` (soil moisture + temperature, two-column layout) |
 
-Cards auto-discover their entities from a single primary entity, and a card for a device you don't have simply stays invisible. Other Tuya quirks (e.g. the `TS0001` switch) now live in a dedicated repo — see [Bundled ZHA quirks](#bundled-zha-quirks).
+Cards auto-discover their entities from a single primary entity, and a card for a device you don't have simply stays invisible. All ZHA quirks — including the two for these devices — live in the companion repo, see [ZHA layer](#zha-layer-zha-tuya-quirks).
 
 ![Dashboard with the soil-moisture and irrigation-control cards](screenshot1.png)
 
@@ -22,7 +22,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves + bundled ZHA quirks | v2.13.0 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves (radio side in zha-tuya-quirks) | v2.13.0 |
 | `irrigation-control-card` | Lovelace card driving the services above, with battery + Zigbee signal icon | v2.10.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature (+ optional air humidity) sensors, with a tap-to-open trend panel (day / week / month) and a Zigbee signal icon | v1.7.0 |
 
@@ -32,11 +32,12 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 2. **Immediately** search "Tuya Irrigation" in HACS → open it → **Download**. *(Do not restart before downloading — see note below.)*
 3. **Restart Home Assistant.**
 4. Settings → Devices & Services → **Add Integration** → "Tuya Irrigation" → Submit (no inputs).
-5. The card bundle is served and auto-registered as a Lovelace resource automatically (in *storage* mode, the default); the resource URL carries a content hash, so updated cards show up after a normal page reload. If your dashboard is in YAML mode, add the resource manually under Settings → Dashboards → Resources: url `/tuya_irrigation/tuya-cards.js`, type **module**.
+5. **ZHA valve?** Also install [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks) the same way (custom repository, category **Integration**, then add "Tuya ZHA" under Devices & Services). It provides the GiEX QT06 quirk, the clock push before each run and the keep-alive for weak-signal battery valves. If it's missing, a **repair issue** reminds you; irrigation still works, but start/end stamps drift.
+6. The card bundle is served and auto-registered as a Lovelace resource automatically (in *storage* mode, the default); the resource URL carries a content hash, so updated cards show up after a normal page reload. If your dashboard is in YAML mode, add the resource manually under Settings → Dashboards → Resources: url `/tuya_irrigation/tuya-cards.js`, type **module**.
 
 > ⚠️ **Do not restart between steps 1 and 2.** HACS 2.x removes custom repositories that are registered but not yet downloaded at every startup. Click **Download** first — from then on the repo persists across restarts.
 
-**Manual install (no HACS):** copy `custom_components/tuya_irrigation/` into `/config/custom_components/`, restart HA, then do steps 4–5 above.
+**Manual install (no HACS):** copy `custom_components/tuya_irrigation/` into `/config/custom_components/`, restart HA, then do steps 4–6 above.
 
 ---
 
@@ -98,7 +99,7 @@ You'll see one `Shutdown safety: closing open irrigation valve <entity>` WARNING
 
 Battery valves like the GiEX QT06 are sleepy Zigbee end devices. In a spot with a weak link their spontaneous reports stop reaching the coordinator, and ZHA marks them **unavailable** after `consider_unavailable_battery` (6 h default) even though the valve still works — while the Tuya gateway keeps showing them online.
 
-To prevent this, the integration periodically (once at startup, then every hour) pokes each **idle battery-powered** valve (any detected valve that exposes a battery sensor) with a genuine over-the-air read of its Basic cluster — the reply refreshes ZHA's *last seen* so the device stays online. (An entity-level `update_entity` poll would not work here: the Tuya quirk answers the switch's On/Off cluster from local cache without touching the radio.) Mains-powered valves are left alone — ZHA polls those itself. Valves with a run in progress are skipped (they're already communicating). It's best-effort and fully guarded; no configuration needed. If the link is so weak that nothing gets through for 6 h, the keep-alive can't help either — add a mains-powered Zigbee router near the valve, or raise the device's *consider unavailable* timeout in ZHA.
+To prevent this, the integration periodically (once at startup, then every hour) asks [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks) (`zha_tuya_quirks.keepalive_poll`) to poke each **idle battery-powered** valve (any detected valve that exposes a battery sensor) with a genuine over-the-air read of its Basic cluster — the reply refreshes ZHA's *last seen* so the device stays online. Without that integration the sweep is skipped and a repair issue is raised. (An entity-level `update_entity` poll would not work here: the Tuya quirk answers the switch's On/Off cluster from local cache without touching the radio.) Mains-powered valves are left alone — ZHA polls those itself. Valves with a run in progress are skipped (they're already communicating). It's best-effort and fully guarded; no configuration needed. If the link is so weak that nothing gets through for 6 h, the keep-alive can't help either — add a mains-powered Zigbee router near the valve, or raise the device's *consider unavailable* timeout in ZHA.
 
 ---
 
@@ -142,20 +143,20 @@ When you build an automation by **selecting a device first**, any recognized irr
 
 ---
 
-## Bundled ZHA quirks
+## ZHA layer (zha-tuya-quirks)
 
-The integration ships custom ZHA quirks under `custom_components/tuya_irrigation/quirks/`, imported as a side-effect on load — they register with zigpy's global registry exactly as if dropped into `zha.custom_quirks_path`. **No `configuration.yaml` change and no manual copy needed** — installing/updating via HACS is enough.
+This integration holds **no ZHA / zigpy code**: it reasons only about Home Assistant entities (the valve switch, the water-volume sensor, the `select` / `number` the device exposes), so in principle it can drive a valve behind any Zigbee integration. Everything that must talk to the radio lives in the companion [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks) integration and is reached through its services, best-effort and only if they are registered:
 
-| File | Devices | What it fixes |
-|---|---|---|
-| `giex_qt06_epoch2000.py` | `_TZE200_a7sghmms` / `_TZE204_a7sghmms` / `_TZE200_7ytb3h8u` / `_TZE204_7ytb3h8u` / `_TZE284_7ytb3h8u` (TS0601 GiEX QT06) | Answers `commandMcuSyncTime` with the 2000-01-01 Tuya epoch (not the upstream 1970), so the firmware stops re-firing `MCU_SYNC` aggressively (which drained the battery in days and made `irrigation_end_time` flap). Also patches `giex_string_to_dt` so start/end times use HA's local timezone (upstream hardcodes +04:00) and tolerate the startup-restored value. The integration additionally syncs the device clock (Tuya 0x24) at each run start. |
-| `hobeian_zg303z.py` | `HOBEIAN ZG-303Z` (Excellux 3-in-1 soil sensor) | **Swaps the two humidity channels** so the entities match the physical measurement: the radio reports on the standard humidity cluster (0x0405) are diverted to the **soil moisture** entity, and DP 109 feeds the **air humidity** entity. Maps DP 5 → temperature; routes the other periodic DPs (3, 9, 15, 102, 104, 105, 110, 111, 112) to a no-op so ZHA stops replying `UNSUPPORTED_ATTRIBUTE` (which the sleepy device fails to retrieve in time, cascading into `MAC_INDIRECT_TIMEOUT`). |
+| Need | Provided by |
+|---|---|
+| GiEX QT06 quirk (2000 epoch for `commandMcuSyncTime`, local-timezone start/end stamps) | quirk `giex_qt06_epoch2000.py` in zha-tuya-quirks |
+| HOBEIAN ZG-303Z soil sensor quirk (humidity channel swap, DP routing) | quirk `hobeian_zg303z.py` in zha-tuya-quirks |
+| Device clock push right before each run (Tuya 0x24), so the device stamps correct `irrigation_start_time` / `irrigation_end_time` | service `zha_tuya_quirks.push_device_time`, called from `_async_begin_run` |
+| Keep-alive over-the-air read for idle battery valves | service `zha_tuya_quirks.keepalive_poll`, called from the hourly sweep |
 
-> **ZG-303Z: this quirk inverts the two humidity channels compared to the Z2M reference converter** ([Koenkk/zigbee2mqtt#30576](https://github.com/Koenkk/zigbee2mqtt/issues/30576)), which maps DP 109 → soil moisture and leaves cluster 0x0405 as air humidity. Ten days of history from two separate units showed the opposite: the 0x0405 value decays slowly and monotonically after watering (99 % → 63 %, no day/night cycle — soil drying out), while DP 109 swings 20-30 points a day, saturates at 99 % every night and bottoms out at 13-14h in anticorrelation with temperature (ambient air). Either the Z2M converter targets a different firmware or it was never validated in the field. If *your* unit shows a `_soil_moisture` entity with a strong diurnal cycle and a `_humidity` entity that barely moves, you have the other behaviour — please open an issue with the two histories. Upgrading from the previous mapping: the entity ids don't change, but their meaning does, so check any automation or card threshold built on `_soil_moisture` / `_humidity`.
+The two quirks used to ship inside this integration (up to v2.13.0) and moved over unchanged — same clusters, same entity ids, nothing to rename. **Update order on an existing install: zha-tuya-quirks first, then this repo.** During the overlap both register the same quirk, which is harmless; the reverse order leaves the devices on the upstream quirk for one restart. If you previously deployed any of these manually under `/config/custom_zha_quirks/`, **delete the manual copy** (ZHA keeps the last-loaded quirk for a `(manufacturer, model)`, so the manual file would shadow the bundled one).
 
-> Non-irrigation Tuya quirks (e.g. the `TS0001` switch `external_switch_type` select) now live in a dedicated repo: [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks).
-
-If you previously deployed any of these manually under `/config/custom_zha_quirks/`, **delete the manual copy** after upgrading (ZHA keeps the last-loaded quirk for a `(manufacturer, model)`, so the manual file would shadow the bundled one). Paired devices may need a one-off **Reconfigure** (device → ⋮ → Reconfigure) to pick up the new quirk class.
+When a ZHA valve is detected and the companion integration is not loaded, a **repair issue** ("Tuya ZHA integration missing") is raised and clears itself once it is.
 
 ---
 

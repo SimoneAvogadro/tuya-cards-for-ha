@@ -126,3 +126,15 @@ MIN_RUN_S = 2.0
 def history_signal(switch_entity: str) -> str:
     """Dispatcher signal name fired when a valve's run log changes."""
     return f"{DOMAIN}_history_{switch_entity}"
+
+# ── ZHA layer (zha_tuya_quirks) ──
+# Everything that must touch the Zigbee radio — the GiEX / ZG-303Z quirks, the
+# Tuya MCU time push before a run, the Basic-cluster keep-alive read — lives in
+# the ZHA-specific `zha_tuya_quirks` integration and is reached through its
+# services. This integration holds no ZHA/zigpy code: it calls these services
+# only if they are registered, and raises a repair issue when a ZHA valve is
+# detected but the layer is missing.
+ZHA_LAYER_DOMAIN = "zha_tuya_quirks"
+ZHA_LAYER_TIME_SERVICE = "push_device_time"
+ZHA_LAYER_KEEPALIVE_SERVICE = "keepalive_poll"
+ZHA_LAYER_ISSUE_ID = "zha_layer_missing"

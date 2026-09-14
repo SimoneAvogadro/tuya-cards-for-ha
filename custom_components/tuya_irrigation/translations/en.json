@@ -68,5 +68,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "zha_layer_missing": {
+      "title": "Tuya ZHA integration missing",
+      "description": "A ZHA irrigation valve was detected, but the **Tuya ZHA** integration (`zha_tuya_quirks`) is not installed or not loaded. It provides the GiEX QT06 quirk (correct clock epoch and local-time start/end stamps), the clock push before each run and the keep-alive for weak-signal battery valves. Irrigation still works without it, but the valve's start/end times will drift and a battery valve on a weak link may go unavailable.\n\nInstall it from HACS (custom repository `SimoneAvogadro/zha-tuya-quirks`, category Integration), add it under Settings → Devices & Services, then restart Home Assistant. This issue clears itself once the integration is loaded."
+    }
   }
 }

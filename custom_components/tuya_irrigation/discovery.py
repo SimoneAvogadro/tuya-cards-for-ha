@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import FOREIGN_VALVE_PLATFORMS, VALVE_VOLUME_DEVICE_CLASSES
@@ -120,3 +121,18 @@ def device_has_battery(hass: HomeAssistant, device_id: str) -> bool:
         if entry.domain == "sensor" and _device_class_of(hass, entry) == "battery":
             return True
     return False
+
+
+@callback
+def device_is_zha(hass: HomeAssistant, device_id: str) -> bool:
+    """Whether a device is a ZHA (Zigbee) device.
+
+    Used to decide if the `zha_tuya_quirks` layer is expected: only ZHA valves
+    need its quirks and radio helpers; a Zigbee2MQTT valve does not.
+    """
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None:
+        return False
+    return any(i[0] == "zha" for i in device.identifiers) or any(
+        c[0] == dr.CONNECTION_ZIGBEE for c in device.connections
+    )

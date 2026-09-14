@@ -4,7 +4,7 @@
 
 A Home Assistant custom **integration** (`tuya_irrigation`) plus two companion **Lovelace cards**, targeting Tuya-based smart devices (ZHA / Zigbee2MQTT). Distributed as a single HACS custom repository (category: Integration — HACS auto-detects from `custom_components/`).
 
-The integration provides two server-side services that reliably open + wait + close an irrigation valve (working around firmware bugs in e.g. GiEX QT06 / `_TZE200_a7sghmms` whose native duration timer is silently ignored under ZHA). It records a durable per-valve **irrigation history** (a run log + a cumulative water total) via new sensors and an `irrigation_completed` event, and auto-serves and auto-registers the Lovelace card bundle so users don't need to configure Lovelace resources manually.
+The integration holds **no ZHA / zigpy code** (see [ZHA layer](#zha-layer-zha-tuya-quirks)). It provides two server-side services that reliably open + wait + close an irrigation valve (working around firmware bugs in e.g. GiEX QT06 / `_TZE200_a7sghmms` whose native duration timer is silently ignored under ZHA). It records a durable per-valve **irrigation history** (a run log + a cumulative water total) via new sensors and an `irrigation_completed` event, and auto-serves and auto-registers the Lovelace card bundle so users don't need to configure Lovelace resources manually.
 
 ## Repo structure
 
@@ -12,7 +12,7 @@ The integration provides two server-side services that reliably open + wait + cl
 tuya-cards-for-ha/
 ├── custom_components/
 │   └── tuya_irrigation/
-│       ├── __init__.py           ← services + run-log manager + static path + Lovelace auto-reg + quirks import
+│       ├── __init__.py           ← services + run-log manager + static path + Lovelace auto-reg + ZHA-layer service calls
 │       ├── config_flow.py        ← minimal single-entry config flow (one-click enable)
 │       ├── const.py
 │       ├── discovery.py          ← valve auto-detection (switch + water-volume sensor, minus foreign-owned)
@@ -24,10 +24,6 @@ tuya-cards-for-ha/
 │       ├── services.yaml
 │       ├── strings.json          ← config-flow + entity UI strings (EN source)
 │       ├── translations/         ← per-language overrides (en, it)
-│       ├── quirks/               ← bundled ZHA custom quirks (auto-registered on import)
-│       │   ├── __init__.py       ← imports each quirk module for side-effect registration
-│       │   ├── giex_qt06_epoch2000.py
-│       │   └── hobeian_zg303z.py
 │       └── www/
 │           └── tuya-cards.js     ← built bundle (copied by build.sh — DO NOT edit)
 ├── docs/
@@ -77,7 +73,7 @@ Registered in `_async_register_services` (called from `async_setup_entry`):
 
 Both services cancel any previously-running task on the same switch. The cancelled task checks `active_tasks[switch] is my_task` in its `finally` before touching the valve, so the cancellation does not disturb the new task.
 
-Both handlers do only their mode-specific validation and then delegate to the single shared **`_async_begin_run(switch_entity, mode, target, run_coro)`** — so all three entry points (card, service call, device action) funnel through the two services, and both services funnel through one start method. `_async_begin_run` runs the start sequence in this exact order: `_cancel_existing` → `managed_switches.add` → `_async_push_run_plan` → `_async_push_device_time` → `asyncio.sleep(_TIME_SYNC_SETTLE)` → `async_create_task(run_coro)` → `_turn_on` (valve opens **last**, after the DP + clock are applied, so the device stamps start/end with the target + a correct RTC).
+Both handlers do only their mode-specific validation and then delegate to the single shared **`_async_begin_run(switch_entity, mode, target, run_coro)`** — so all three entry points (card, service call, device action) funnel through the two services, and both services funnel through one start method. `_async_begin_run` runs the start sequence in this exact order: `_cancel_existing` → `managed_switches.add` → `_async_push_run_plan` → `_async_push_device_time` (= service `zha_tuya_quirks.push_device_time`, skipped if absent) → `asyncio.sleep(_TIME_SYNC_SETTLE)` → `async_create_task(run_coro)` → `_turn_on` (valve opens **last**, after the DP + clock are applied, so the device stamps start/end with the target + a correct RTC).
 
 `_async_push_run_plan(hass, switch_entity, mode, target)` (`"Duration"`/seconds for by_seconds, `"Capacity"`/liters for by_liters) writes the device's `select.<prefix>_irrigation_mode` + `number.<prefix>_irrigation_target` via the `select`/`number` services. This is **display-only**: the device echoes the values back and computes `irrigation_end_time = start + target`, which the card reads for its device-truth progress bar. It is best-effort and fully guarded (mirrors `_async_push_device_time`) — it never blocks irrigation, and the server-side task still owns closing the valve (the firmware's native auto-off is not trusted). NOTE: this is a runtime entity write, NOT a quirk DP re-map, so it does not hit the "DP already mapped" failure mode.
 
@@ -122,17 +118,20 @@ Each finalized run also fires the **un-namespaced `irrigation_completed`** event
 3. Run `bash build.sh`.
 4. Update the "What's included" table in `README.md`.
 
-## Bundled ZHA quirks
+## ZHA layer (zha-tuya-quirks)
 
-The integration ships custom ZHA quirks under `custom_components/tuya_irrigation/quirks/`. They are imported at module load time from the integration's top-level `__init__.py` (`from . import quirks`) so that defining a `CustomDevice` subclass — or calling `add_to_registry()` on a `QuirkBuilder` — registers them into zigpy's global registry **before** ZHA enumerates devices.
+Everything that needs ZHA or zigpy lives in the sibling repo/integration **zha-tuya-quirks** (`~/zha-tuya-quirks`, domain `zha_tuya_quirks`): the GiEX QT06 and HOBEIAN ZG-303Z quirks (moved there on 2026-09-14 with byte-identical quirk code, so entity ids did not change) and two radio helper services. This integration reaches them **only through services**, via `_async_call_zha_layer(hass, service, switch_entity)` in `__init__.py`:
+
+- `zha_tuya_quirks.push_device_time(entity_id)` — Tuya MCU time-sync (0x24) on the 0xEF00 cluster; called by `_async_push_device_time` from `_async_begin_run`.
+- `zha_tuya_quirks.keepalive_poll(entity_id)` — cache-bypassing Basic-cluster read; called by `_async_keepalive_poll` from the hourly sweep. The sweep itself (which valves, when, stagger) stays here because it needs discovery + the run log.
 
 Rules:
-- One quirk per file, named after the device family.
-- Each new quirk must be added to `quirks/__init__.py` so the side-effect import fires.
-- Update the "Bundled ZHA quirks" table in `README.md` whenever a quirk is added or its scope changes.
-- Quirks must not import from `custom_components.tuya_irrigation.*` other than `quirks.*` to keep them self-contained — they have to keep working even if ZHA loads them via `custom_quirks_path` instead of via the integration import path.
+- Both calls are best-effort: skipped with a debug log when the service is not registered (`hass.services.has_service`), logged as a WARNING and swallowed when it raises. They must never block or fail irrigation.
+- `_async_check_zha_layer` (run at the start of every keep-alive sweep, i.e. at HA start and hourly) raises the repair issue `zha_layer_missing` when a discovered valve `device_is_zha` and the time-push service is absent, and deletes it otherwise. Strings live under `issues` in `strings.json` / `translations/*`.
+- Never import `homeassistant.components.zha`, `zigpy` or `zhaquirks` here. A new ZHA-only need (e.g. a per-DP "last report" timestamp for the soil card) goes into zha-tuya-quirks as an entity or a service, and this side consumes it by entity suffix / service name with a graceful fallback.
+- Constants: `ZHA_LAYER_DOMAIN`, `ZHA_LAYER_TIME_SERVICE`, `ZHA_LAYER_KEEPALIVE_SERVICE`, `ZHA_LAYER_ISSUE_ID` in `const.py`.
 
-Override semantics: zigpy uses last-registered-wins for the same `(manufacturer, model)` tuple. A quirk a user has dropped into their own `zha.custom_quirks_path` will shadow the bundled one, which is intentional (lets users patch locally without forking the integration). The README tells users to remove their manual copies after upgrading.
+Design note: `docs/superpowers/specs/2026-09-14-zha-layer-split-design.md`.
 
 ## HACS specifics
 
@@ -154,6 +153,7 @@ For a visual check without HA, render the bundle in the Playwright Chromium bina
 
 Everything else is verified manually on a real HA instance:
 - Integration loads without errors (Settings → Devices & Services → Logs).
+- With zha-tuya-quirks loaded: `Pushed device time` appears in its log at each run start, `Keep-alive read ok` hourly; the repair issue is absent. With it removed: the repair issue "Tuya ZHA integration missing" appears after the first sweep and irrigation still runs.
 - Both services visible in Dev Tools → Services with proper field UI.
 - `tuya_irrigation.irrigation_by_seconds` with 5s closes the valve after 5s even on a valve with broken firmware auto-off.
 - Lovelace resource auto-registered at `/tuya_irrigation/tuya-cards.js?v=<VERSION>-<hash8>` (hash of the bundle content, so every rebuilt bundle gets a fresh URL and no client cache survives it).

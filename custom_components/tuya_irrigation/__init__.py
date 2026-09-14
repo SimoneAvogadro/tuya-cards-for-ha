@@ -75,6 +75,14 @@ _LOGGER = logging.getLogger(__name__)
 # don't burst the Zigbee network when several valves are configured.
 _KEEPALIVE_STAGGER = 2.0
 
+# Upper bound on how long a timed run waits for the switch to report "on"
+# before it starts counting. The open is not instantaneous: the GiEX quirk
+# inserts a clock frame + ~1.5 s settle in front of the open DP, and a sleepy
+# Zigbee device adds its own latency. Counting from the confirmed open keeps
+# "N seconds" meaning N seconds of water, not N minus the radio delay. If the
+# valve never confirms (offline), the timer runs anyway so the close is sent.
+_OPEN_CONFIRM_TIMEOUT_S = 10.0
+
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
 # The valve can be addressed either by its switch entity (what the card, the
@@ -796,12 +804,32 @@ def _async_register_services(
         }
         await _turn_on(switch_entity)
 
+    async def _async_wait_for_open(switch_entity: str) -> bool:
+        """Wait (bounded by _OPEN_CONFIRM_TIMEOUT_S) for the switch to report on."""
+        deadline = hass.loop.time() + _OPEN_CONFIRM_TIMEOUT_S
+        while hass.loop.time() < deadline:
+            state = hass.states.get(switch_entity)
+            if state is not None and state.state == "on":
+                return True
+            await asyncio.sleep(0.2)
+        return False
+
     async def _run_seconds(switch_entity: str, seconds: int) -> None:
-        """Sleep for `seconds`, then close the valve. Cancellation-safe."""
+        """Count `seconds` from the confirmed open, then close the valve.
+
+        Cancellation-safe. The task is created just before `_turn_on`, so it
+        first waits for the switch to actually report on (see
+        _OPEN_CONFIRM_TIMEOUT_S), then sleeps the requested time.
+        """
         my_task = asyncio.current_task()
         async_dispatcher_send(hass, running_signal(switch_entity), True)
         _LOGGER.info("Irrigation on %s for %d seconds (started)", switch_entity, seconds)
         try:
+            if not await _async_wait_for_open(switch_entity):
+                _LOGGER.warning(
+                    "%s did not confirm open within %.0fs; timing from now anyway",
+                    switch_entity, _OPEN_CONFIRM_TIMEOUT_S,
+                )
             await asyncio.sleep(seconds)
             _set_pending(switch_entity, reason="completed")
             _LOGGER.info("Timer expired on %s — closing valve", switch_entity)

@@ -17,6 +17,9 @@ SERVICE_IRRIGATION_BY_LITERS = "irrigation_by_liters"
 
 # Service attribute keys.
 ATTR_SWITCH_ENTITY = "switch_entity"
+# Alternative to switch_entity: the valve *device* (what the UI selector offers —
+# a device picker filtered to devices carrying this integration's entities).
+ATTR_DEVICE_ID = "device_id"
 ATTR_SECONDS = "seconds"
 ATTR_LITERS = "liters"
 ATTR_TIMEOUT_SECONDS = "timeout_seconds"

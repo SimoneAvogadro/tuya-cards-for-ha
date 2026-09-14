@@ -40,6 +40,10 @@
       "name": "Seconds⏰💧 (🌱timed irrigation)",
       "description": "Time: opens the valve, waits N seconds, then closes it. The timer runs server-side inside Home Assistant, so it works regardless of the valve firmware's own auto-off behaviour (useful for devices such as the Tuya _TZE200_a7sghmms whose native duration timer is unreliable under ZHA).",
       "fields": {
+        "device_id": {
+          "name": "Irrigation valve",
+          "description": "The valve device to drive (only detected irrigation valves are listed)."
+        },
         "switch_entity": {
           "name": "Valve",
           "description": "The switch entity that controls the irrigation valve."
@@ -54,6 +58,10 @@
       "name": "Liters🪣💧 (🌱volume irrigation)",
       "description": "Volume: opens the valve, monitors the device's _summation_delivered sensor and closes the valve when the configured volume has been delivered. Two safety nets bound a run that never reaches its target: a stall watchdog closes the valve if no water is measured for ~5 minutes, and an adaptive cap tightens the maximum runtime toward the measured flow rate (never beyond the safety timeout below).",
       "fields": {
+        "device_id": {
+          "name": "Irrigation valve",
+          "description": "The valve device to drive (only detected irrigation valves are listed)."
+        },
         "switch_entity": {
           "name": "Valve",
           "description": "The switch entity that controls the irrigation valve."

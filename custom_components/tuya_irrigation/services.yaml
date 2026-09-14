@@ -3,13 +3,22 @@
 # this file only carries the selectors the frontend renders. Keeping the labels
 # out of here is what makes them translatable — inline names in this file are
 # shown verbatim in every language.
+#
+# The valve is picked as a DEVICE (filtered to this integration, so the list is
+# exactly the detected valves). `switch_entity` is still accepted by the service
+# schema for the card, the device actions and existing automations, but is not
+# offered in the UI so the form stays a single line.
 irrigation_by_seconds:
   fields:
-    switch_entity:
+    device_id:
       required: true
       selector:
-        entity:
-          domain: switch
+        device:
+          filter:
+            # Only devices carrying this integration's entities, i.e. the
+            # detected valves (each gets an "Irrigating" binary_sensor + the
+            # history/water-total sensors merged into its device).
+            - integration: tuya_irrigation
     seconds:
       required: true
       example: 60
@@ -22,11 +31,15 @@ irrigation_by_seconds:
 
 irrigation_by_liters:
   fields:
-    switch_entity:
+    device_id:
       required: true
       selector:
-        entity:
-          domain: switch
+        device:
+          filter:
+            # Only devices carrying this integration's entities, i.e. the
+            # detected valves (each gets an "Irrigating" binary_sensor + the
+            # history/water-total sensors merged into its device).
+            - integration: tuya_irrigation
     liters:
       required: true
       example: 10

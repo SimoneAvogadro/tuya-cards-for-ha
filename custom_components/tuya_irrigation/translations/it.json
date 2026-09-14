@@ -40,6 +40,10 @@
       "name": "Secondi⏰💧 (🌱irrigazione a tempo)",
       "description": "Tempo: apre la valvola, attende N secondi, poi la chiude. Il timer gira lato server dentro Home Assistant, quindi funziona a prescindere dall'auto-spegnimento del firmware della valvola (utile per dispositivi come il Tuya _TZE200_a7sghmms, il cui timer nativo e' inaffidabile sotto ZHA).",
       "fields": {
+        "device_id": {
+          "name": "Valvola di irrigazione",
+          "description": "Il dispositivo valvola da comandare (sono elencate solo le valvole di irrigazione rilevate)."
+        },
         "switch_entity": {
           "name": "Valvola",
           "description": "L'entita' switch che comanda la valvola di irrigazione."
@@ -54,6 +58,10 @@
       "name": "Litri🪣💧 (🌱irrigazione a volume)",
       "description": "Volume: apre la valvola, segue il sensore _summation_delivered del dispositivo e la chiude quando il volume richiesto e' stato erogato. Due reti di sicurezza limitano una corsa che non raggiunge mai il target: un watchdog chiude la valvola se non viene misurata acqua per ~5 minuti, e un limite adattivo stringe la durata massima verso la portata misurata (mai oltre il timeout di sicurezza qui sotto).",
       "fields": {
+        "device_id": {
+          "name": "Valvola di irrigazione",
+          "description": "Il dispositivo valvola da comandare (sono elencate solo le valvole di irrigazione rilevate)."
+        },
         "switch_entity": {
           "name": "Valvola",
           "description": "L'entita' switch che comanda la valvola di irrigazione."

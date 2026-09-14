@@ -49,14 +49,19 @@ Opens the valve, waits N seconds **server-side**, closes it — independent of t
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `switch_entity` | entity_id (switch) | yes | Valve switch to control |
+| `device_id` | device | one of the two | The valve **device** — what the UI offers: a device picker listing only the detected irrigation valves |
+| `switch_entity` | entity_id (switch) | one of the two | The valve switch, for YAML / the card / existing automations (`device_id` wins if both are given) |
 | `seconds` | int [1, 43200] | yes | How long to keep the valve open |
 
 ```yaml
 - service: tuya_irrigation.irrigation_by_seconds
   data:
-    switch_entity: switch.tze200_a7sghmms_ts0601
+    device_id: 1f2e3d4c5b6a…          # as picked in the UI
     seconds: 600   # 10 minutes
+# or, by entity:
+#   data:
+#     switch_entity: switch.tze200_a7sghmms_ts0601
+#     seconds: 600
 ```
 
 ### `tuya_irrigation.irrigation_by_liters`
@@ -65,7 +70,8 @@ Opens the valve, watches `sensor.<prefix>_summation_delivered`, closes when the 
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `switch_entity` | entity_id (switch) | yes | Valve switch to control |
+| `device_id` | device | one of the two | The valve **device** — what the UI offers: a device picker listing only the detected irrigation valves |
+| `switch_entity` | entity_id (switch) | one of the two | The valve switch, for YAML / the card / existing automations (`device_id` wins if both are given) |
 | `liters` | number [0.001, 10000] | yes | Target volume to deliver |
 | `timeout_seconds` | int [60, 86400] | no (default 3600) | Safety timeout — max time the valve may stay open; the adaptive cap only tightens it downward, never extends it |
 

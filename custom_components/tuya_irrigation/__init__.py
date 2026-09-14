@@ -23,6 +23,7 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -34,6 +35,7 @@ from homeassistant.helpers.start import async_at_started
 from homeassistant.setup import async_when_setup
 
 from .const import (
+    ATTR_DEVICE_ID,
     ATTR_LITERS,
     ATTR_SECONDS,
     ATTR_SWITCH_ENTITY,
@@ -74,22 +76,59 @@ _KEEPALIVE_STAGGER = 2.0
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
-SECONDS_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SWITCH_ENTITY): cv.entity_id,
-        vol.Required(ATTR_SECONDS): vol.All(vol.Coerce(int), vol.Range(min=1, max=43200)),
-    }
+# The valve can be addressed either by its switch entity (what the card, the
+# device actions and pre-2.14 automations send) or by its device (what the
+# service UI offers: a device picker filtered to devices carrying this
+# integration's entities, i.e. exactly the detected valves). At least one of the
+# two is required; device_id wins when both are given.
+SECONDS_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Optional(ATTR_SWITCH_ENTITY): cv.entity_id,
+            vol.Optional(ATTR_DEVICE_ID): cv.string,
+            vol.Required(ATTR_SECONDS): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=43200)
+            ),
+        }
+    ),
+    cv.has_at_least_one_key(ATTR_SWITCH_ENTITY, ATTR_DEVICE_ID),
 )
 
-LITERS_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_SWITCH_ENTITY): cv.entity_id,
-        vol.Required(ATTR_LITERS): vol.All(vol.Coerce(float), vol.Range(min=0.001, max=10000)),
-        vol.Optional(ATTR_TIMEOUT_SECONDS, default=DEFAULT_LITERS_TIMEOUT): vol.All(
-            vol.Coerce(int), vol.Range(min=60, max=86400)
-        ),
-    }
+LITERS_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Optional(ATTR_SWITCH_ENTITY): cv.entity_id,
+            vol.Optional(ATTR_DEVICE_ID): cv.string,
+            vol.Required(ATTR_LITERS): vol.All(
+                vol.Coerce(float), vol.Range(min=0.001, max=10000)
+            ),
+            vol.Optional(ATTR_TIMEOUT_SECONDS, default=DEFAULT_LITERS_TIMEOUT): vol.All(
+                vol.Coerce(int), vol.Range(min=60, max=86400)
+            ),
+        }
+    ),
+    cv.has_at_least_one_key(ATTR_SWITCH_ENTITY, ATTR_DEVICE_ID),
 )
+
+
+def _switch_from_call(hass: HomeAssistant, call: ServiceCall) -> str:
+    """Resolve the valve switch a service call addresses.
+
+    `device_id` (the UI's device picker) is resolved through discovery to the
+    device's valve switch; `switch_entity` is taken as-is. A device that is not
+    a detected valve is a user error, reported as a ServiceValidationError so
+    the automation editor / Developer Tools show it instead of a traceback.
+    """
+    device_id = call.data.get(ATTR_DEVICE_ID)
+    if device_id:
+        switch_entity = valve_switch_for_device(hass, device_id)
+        if switch_entity is None:
+            raise ServiceValidationError(
+                f"Device {device_id} is not a detected irrigation valve "
+                "(it needs a switch and a water-volume sensor)"
+            )
+        return switch_entity
+    return call.data[ATTR_SWITCH_ENTITY]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -986,7 +1025,7 @@ def _async_register_services(
                         )
 
     async def _handle_seconds(call: ServiceCall) -> None:
-        switch_entity: str = call.data[ATTR_SWITCH_ENTITY]
+        switch_entity = _switch_from_call(hass, call)
         seconds: int = int(call.data[ATTR_SECONDS])
 
         if not switch_entity.startswith("switch."):
@@ -1001,7 +1040,7 @@ def _async_register_services(
         )
 
     async def _handle_liters(call: ServiceCall) -> None:
-        switch_entity: str = call.data[ATTR_SWITCH_ENTITY]
+        switch_entity = _switch_from_call(hass, call)
         liters: float = float(call.data[ATTR_LITERS])
         timeout_seconds: int = int(
             call.data.get(ATTR_TIMEOUT_SECONDS, DEFAULT_LITERS_TIMEOUT)

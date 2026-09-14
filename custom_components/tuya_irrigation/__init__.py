@@ -25,6 +25,8 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
@@ -174,6 +176,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _async_register_frontend(hass)
     _async_register_services(hass, active_tasks, managed_switches)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_create_task(hass, _async_cleanup_registry(hass, entry))
 
     async def _async_stop(event) -> None:
         """On HA shutdown, close every valve this integration opened."""
@@ -200,6 +203,77 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
     _LOGGER.info("Tuya Irrigation v%s integration loaded", VERSION)
+    return True
+
+
+# unique_id prefixes of this integration's entities; the remainder is the
+# valve switch entity_id the entity was created for.
+_UNIQUE_ID_PREFIXES = (
+    f"{DOMAIN}_running_",
+    f"{DOMAIN}_history_",
+    f"{DOMAIN}_water_total_",
+)
+# Seconds to wait before the registry cleanup, so the entities added at setup
+# have re-hooked themselves onto their ZHA device first (see entity.py) and any
+# sibling device left behind is entity-less and safe to delete.
+_CLEANUP_DELAY_S = 10
+
+
+def _switch_from_unique_id(unique_id: str | None) -> str | None:
+    if not unique_id:
+        return None
+    for prefix in _UNIQUE_ID_PREFIXES:
+        if unique_id.startswith(prefix):
+            return unique_id[len(prefix):]
+    return None
+
+
+async def _async_cleanup_registry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Drop what earlier versions left in the registries.
+
+    1. Entities of this integration whose valve switch is no longer a detected
+       valve — e.g. the pair once created for a SONOFF valve before
+       FOREIGN_VALVE_PLATFORMS existed, or a binary_sensor keyed on a switch
+       entity_id the user has since renamed. They can never come alive again
+       (unique_ids embed the switch), they only show as `unavailable`.
+    2. Devices owned solely by this integration that hold no entities: the
+       "sibling" devices HA 2026.8 split off when entities still claimed the
+       ZHA identifiers through DeviceInfo (entities now attach via the entity
+       registry, see entity.py), plus the nameless device created for the
+       SONOFF valve. Never touches a device shared with another config entry.
+    """
+    await asyncio.sleep(_CLEANUP_DELAY_S)
+    if hass.data.get(DOMAIN) is None:
+        return  # unloaded meanwhile
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    valve_switches = {
+        valve_switch_for_device(hass, device_id)
+        for device_id in find_valve_devices(hass)
+    }
+    for reg_entry in list(er.async_entries_for_config_entry(ent_reg, entry.entry_id)):
+        switch = _switch_from_unique_id(reg_entry.unique_id)
+        if switch is None or switch in valve_switches:
+            continue
+        _LOGGER.info(
+            "Removing stale entity %s (its valve switch %s is not a detected valve)",
+            reg_entry.entity_id, switch,
+        )
+        ent_reg.async_remove(reg_entry.entity_id)
+    for device in list(dr.async_entries_for_config_entry(dev_reg, entry.entry_id)):
+        if device.config_entries != {entry.entry_id}:
+            continue
+        if er.async_entries_for_device(ent_reg, device.id, include_disabled_entities=True):
+            continue
+        _LOGGER.info("Removing empty device %s (%s) left by an earlier version",
+                     device.id, device.name_by_user or device.name)
+        dev_reg.async_remove_device(device.id)
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: ConfigEntry, device: dr.DeviceEntry
+) -> bool:
+    """Let the user delete a leftover device of this integration from the UI."""
     return True
 
 

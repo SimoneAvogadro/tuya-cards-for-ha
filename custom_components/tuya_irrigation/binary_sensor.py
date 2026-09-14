@@ -1,12 +1,10 @@
 """'Irrigazione in corso' binary sensor for each detected irrigation valve.
 
 This entity has two jobs:
-  1. It carries the valve's identifiers/connections (copied from the ZHA
-     device). Up to HA 2026.7 that merged it into the ZHA device; since 2026.8
-     (one device per config entry) HA keeps it on a *sibling* device of this
-     integration with the same identifiers and name. Either way it is what
-     makes HA offer this integration's device actions for the valve, and
-     `discovery.resolve_valve_device` maps the sibling back to the switch.
+  1. It attaches itself to the valve's ZHA device through the entity
+     registry (see ``entity.ValveAttachedEntity``). That association is what
+     makes HA offer this integration's device actions for the valve and list
+     the valve in the service device picker.
   2. It reflects the live state of the server-side irrigation timer, which is
      otherwise invisible. State is driven by a per-switch dispatcher signal sent
      from the services in __init__.py.
@@ -21,11 +19,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, running_signal
+from .entity import ValveAttachedEntity
 from .discovery import find_valve_devices, valve_switch_for_device
 
 
@@ -69,27 +67,20 @@ async def async_setup_entry(
     )
 
 
-class IrrigationRunningBinarySensor(BinarySensorEntity):
+class IrrigationRunningBinarySensor(ValveAttachedEntity, BinarySensorEntity):
     """On while a tuya_irrigation timer is running for this valve's switch."""
 
-    _attr_has_entity_name = True
     _attr_translation_key = "irrigating"
     _attr_device_class = BinarySensorDeviceClass.RUNNING
-    _attr_should_poll = False
 
     def __init__(self, device: dr.DeviceEntry, switch_entity: str) -> None:
-        self._switch_entity = switch_entity
+        super().__init__(device, switch_entity)
         self._attr_unique_id = f"{DOMAIN}_running_{switch_entity}"
         self._attr_is_on = False
-        # Merge into the existing (ZHA) device by reusing its identifiers and
-        # connections — this is the association HA uses to surface device actions.
-        self._attr_device_info = DeviceInfo(
-            identifiers=device.identifiers,
-            connections=device.connections,
-        )
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to the running signal for this valve's switch."""
+        """Attach to the ZHA device, then subscribe to the running signal."""
+        await super().async_added_to_hass()
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,

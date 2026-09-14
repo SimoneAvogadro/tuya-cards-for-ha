@@ -1,8 +1,7 @@
 """Irrigation history sensors, one pair per detected valve.
 
-Two entities per valve, both carrying the valve's identifiers/connections (same
-device association as ``binary_sensor.py`` — a sibling device of the ZHA one
-since HA 2026.8, merged into it before):
+Two entities per valve, both attached to the valve's ZHA device through the
+entity registry (``entity.ValveAttachedEntity``, same as ``binary_sensor.py``):
 
   * ``sensor.<prefix>_irrigation_history`` — state is the timestamp of the last
     completed run; its ``runs`` attribute carries the recent run list the card
@@ -29,7 +28,6 @@ from homeassistant.const import UnitOfVolume
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -41,6 +39,7 @@ from .const import (
     WATER_TOTAL_SUFFIX,
     history_signal,
 )
+from .entity import ValveAttachedEntity
 from .discovery import find_valve_devices, valve_switch_for_device
 from .history import IrrigationRunLog
 
@@ -86,11 +85,8 @@ async def async_setup_entry(
     )
 
 
-class _ValveHistoryEntity(SensorEntity):
-    """Shared device-merge + run-log subscription for the history sensors."""
-
-    _attr_has_entity_name = True
-    _attr_should_poll = False
+class _ValveHistoryEntity(ValveAttachedEntity, SensorEntity):
+    """Shared device attachment + run-log subscription for the history sensors."""
 
     def __init__(
         self,
@@ -99,18 +95,15 @@ class _ValveHistoryEntity(SensorEntity):
         run_log: IrrigationRunLog,
         suffix: str,
     ) -> None:
-        self._switch_entity = switch_entity
+        super().__init__(device, switch_entity)
         self._run_log = run_log
         prefix = switch_entity[len("switch.") :]
         # Deterministic entity_id derived from the switch prefix, so the card can
         # discover it via the same suffix convention used for every other entity.
         self.entity_id = f"sensor.{prefix}{suffix}"
-        self._attr_device_info = DeviceInfo(
-            identifiers=device.identifiers,
-            connections=device.connections,
-        )
 
     async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,

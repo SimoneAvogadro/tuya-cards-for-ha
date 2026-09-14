@@ -55,7 +55,6 @@ from .const import (
     ZHA_LAYER_DOMAIN,
     ZHA_LAYER_ISSUE_ID,
     ZHA_LAYER_KEEPALIVE_SERVICE,
-    ZHA_LAYER_TIME_SERVICE,
     running_signal,
 )
 
@@ -68,11 +67,6 @@ from .discovery import (
 from .history import IrrigationRunLog
 
 _LOGGER = logging.getLogger(__name__)
-
-# Seconds to wait after pushing the device clock before opening the valve, so the
-# Tuya MCU applies the pushed time before it stamps irrigation_start_time. The
-# 0x24 time command is fire-and-forget (no ack), hence a fixed settle delay.
-_TIME_SYNC_SETTLE = 1.5
 
 # Seconds to pause between consecutive valve pokes in a keep-alive sweep, so we
 # don't burst the Zigbee network when several valves are configured.
@@ -347,9 +341,10 @@ async def _async_call_zha_layer(
 ) -> bool:
     """Call a zha_tuya_quirks radio helper service for a valve, best-effort.
 
-    The radio-level work (Tuya MCU time push, Basic-cluster keep-alive read)
-    lives in the ZHA-specific `zha_tuya_quirks` integration, which exposes it
-    as services. This integration holds no ZHA/zigpy code: it only asks. When
+    The radio-level work (the Basic-cluster keep-alive read) lives in the
+    ZHA-specific `zha_tuya_quirks` integration, which exposes it as a service.
+    (The GiEX clock sync before a run needs no call at all: the quirk inserts
+    the time frame in front of every valve-open DP.) This integration holds no ZHA/zigpy code: it only asks. When
     that integration is missing the call is skipped silently (a repair issue
     tells the user, see `_async_check_zha_layer`); when it fails, we log and
     move on — neither must ever block or fail irrigation.
@@ -374,18 +369,6 @@ async def _async_call_zha_layer(
     return True
 
 
-async def _async_push_device_time(hass: HomeAssistant, switch_entity: str) -> None:
-    """Best-effort: push the current time to a Tuya valve's MCU before opening it.
-
-    The GiEX RTC drifts and the device never requests a sync, so its
-    start/end-time stamps are wrong unless the clock is pushed right before a
-    run. Delegated to `zha_tuya_quirks.push_device_time` (Tuya command 0x24
-    with the quirk's 2000 epoch). Never blocks or fails irrigation.
-    """
-    if await _async_call_zha_layer(hass, ZHA_LAYER_TIME_SERVICE, switch_entity):
-        _LOGGER.debug("Pushed device time to %s", switch_entity)
-
-
 async def _async_keepalive_poll(hass: HomeAssistant, switch_entity: str) -> None:
     """Best-effort: poke a valve over the air so ZHA refreshes its 'last seen'.
 
@@ -403,14 +386,15 @@ async def _async_keepalive_poll(hass: HomeAssistant, switch_entity: str) -> None
 def _async_check_zha_layer(hass: HomeAssistant) -> bool:
     """Raise (or clear) the repair issue asking for the zha_tuya_quirks integration.
 
-    The GiEX quirk (clock epoch, timezone of start/end stamps) and the two radio
-    helpers moved to the ZHA-specific `zha_tuya_quirks` integration. A user who
-    has a ZHA valve but not that integration silently loses them: the valve
-    still irrigates, but its time stamps drift and a weak-link battery valve
-    can go unavailable. Flag it once, as a persistent repair issue, and clear
-    it as soon as the services show up. Returns whether the layer is present.
+    The GiEX quirk (clock epoch + clock sync before each open, timezone of
+    start/end stamps) and the keep-alive radio helper live in the ZHA-specific
+    `zha_tuya_quirks` integration. A user who has a ZHA valve but not that
+    integration silently loses them: the valve still irrigates, but its time
+    stamps drift and a weak-link battery valve can go unavailable. Flag it as
+    a repair issue and clear it as soon as the service shows up. Returns
+    whether the layer is present.
     """
-    present = _zha_layer_has(hass, ZHA_LAYER_TIME_SERVICE)
+    present = _zha_layer_has(hass, ZHA_LAYER_KEEPALIVE_SERVICE)
     needs_layer = not present and any(
         device_is_zha(hass, device_id) for device_id in find_valve_devices(hass)
     )
@@ -718,15 +702,17 @@ def _async_register_services(
         the two services, and both services funnel through here — so the start
         logic lives in exactly one place.
 
-        Order matters: write the run plan (MODE+TARGET DPs) and sync the device
-        clock, wait the settle, THEN start the monitoring task and open the valve
-        last. That way the device stamps start_time/end_time with the target + a
-        correct RTC (it computes end_time = start + target). Both pushes are
-        best-effort and never block irrigation; the server-side `run_coro` task
-        still owns closing the valve regardless of the device's native auto-off.
+        Order matters: write the run plan (MODE+TARGET DPs), THEN start the
+        monitoring task and open the valve last, so the device stamps
+        start_time/end_time with the target (it computes end_time = start +
+        target). The device clock is synced by the GiEX quirk itself, which
+        inserts the Tuya time frame (+ a short settle) in front of every
+        valve-open DP — no call from here. The run-plan push is best-effort and
+        never blocks irrigation; the server-side `run_coro` task still owns
+        closing the valve regardless of the device's native auto-off.
 
         `run_coro` is the (already-created, not-yet-scheduled) `_run_seconds` /
-        `_run_liters` coroutine; it is scheduled here after the settle. Cancelling
+        `_run_liters` coroutine; it is scheduled here after the run-plan push. Cancelling
         any in-flight run runs before we register ours, so the cancelled task's
         finally (executing during these awaits) closes the valve cleanly before we
         open ours.
@@ -737,8 +723,6 @@ def _async_register_services(
         # safety limit" alert so it can't linger past a run the user just started.
         await _async_dismiss_interruption(hass, switch_entity)
         await _async_push_run_plan(hass, switch_entity, mode, target)
-        await _async_push_device_time(hass, switch_entity)
-        await asyncio.sleep(_TIME_SYNC_SETTLE)
         task = hass.async_create_task(run_coro)
         active_tasks[switch_entity] = task
         # Guarantee a clean off->on edge so the observer attaches THIS run to the

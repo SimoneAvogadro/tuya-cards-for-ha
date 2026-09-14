@@ -38,11 +38,11 @@
   "services": {
     "irrigation_by_seconds": {
       "name": "Secondi⏰💧 (🌱irrigazione a tempo)",
-      "description": "Tempo: apre la valvola, attende N secondi, poi la chiude. Il timer gira lato server dentro Home Assistant, quindi funziona a prescindere dall'auto-spegnimento del firmware della valvola (utile per dispositivi come il Tuya _TZE200_a7sghmms, il cui timer nativo e' inaffidabile sotto ZHA).",
+      "description": "Apre la valvola per N secondi e poi la richiude. Il timer gira in Home Assistant: funziona a browser chiuso e anche se il timer della valvola è inaffidabile.",
       "fields": {
         "device_id": {
           "name": "Valvola di irrigazione",
-          "description": "Il dispositivo valvola da comandare (sono elencate solo le valvole di irrigazione rilevate)."
+          "description": "La valvola da comandare."
         },
         "switch_entity": {
           "name": "Valvola",
@@ -50,17 +50,17 @@
         },
         "seconds": {
           "name": "Secondi",
-          "description": "Per quanto tenere aperta la valvola, in secondi."
+          "description": "Per quanto tenere aperta la valvola."
         }
       }
     },
     "irrigation_by_liters": {
       "name": "Litri🪣💧 (🌱irrigazione a volume)",
-      "description": "Volume: apre la valvola, segue il sensore _summation_delivered del dispositivo e la chiude quando il volume richiesto e' stato erogato. Due reti di sicurezza limitano una corsa che non raggiunge mai il target: un watchdog chiude la valvola se non viene misurata acqua per ~5 minuti, e un limite adattivo stringe la durata massima verso la portata misurata (mai oltre il timeout di sicurezza qui sotto).",
+      "description": "Apre la valvola e la richiude quando sono stati erogati i litri richiesti. Se l'acqua non scorre, la chiude comunque dopo qualche minuto.",
       "fields": {
         "device_id": {
           "name": "Valvola di irrigazione",
-          "description": "Il dispositivo valvola da comandare (sono elencate solo le valvole di irrigazione rilevate)."
+          "description": "La valvola da comandare."
         },
         "switch_entity": {
           "name": "Valvola",
@@ -68,11 +68,16 @@
         },
         "liters": {
           "name": "Litri",
-          "description": "Volume da erogare, in litri."
+          "description": "Volume da erogare."
         },
         "timeout_seconds": {
-          "name": "Timeout di sicurezza (durata massima)",
-          "description": "Tempo massimo di apertura della valvola prima della chiusura forzata, che il volume richiesto sia stato raggiunto o meno. Il limite adattivo puo' solo stringerlo — chiudendo prima, quando la portata campionata dice che la corsa dovrebbe essere gia' finita — mai allungarlo. Una portata ferma chiude comunque la valvola entro ~5 minuti. Default 3600 (1 ora)."
+          "name": "Durata massima [default 1 h]",
+          "description": "Chiusura forzata dopo questo tempo, anche se i litri non sono stati raggiunti."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Avanzate"
         }
       }
     }

@@ -38,11 +38,11 @@
   "services": {
     "irrigation_by_seconds": {
       "name": "Seconds⏰💧 (🌱timed irrigation)",
-      "description": "Time: opens the valve, waits N seconds, then closes it. The timer runs server-side inside Home Assistant, so it works regardless of the valve firmware's own auto-off behaviour (useful for devices such as the Tuya _TZE200_a7sghmms whose native duration timer is unreliable under ZHA).",
+      "description": "Opens the valve for N seconds, then closes it. The timer runs in Home Assistant, so it works with the browser closed and even if the valve's own timer is unreliable.",
       "fields": {
         "device_id": {
           "name": "Irrigation valve",
-          "description": "The valve device to drive (only detected irrigation valves are listed)."
+          "description": "The valve to drive."
         },
         "switch_entity": {
           "name": "Valve",
@@ -50,17 +50,17 @@
         },
         "seconds": {
           "name": "Seconds",
-          "description": "How long to keep the valve open, in seconds."
+          "description": "How long to keep the valve open."
         }
       }
     },
     "irrigation_by_liters": {
       "name": "Liters🪣💧 (🌱volume irrigation)",
-      "description": "Volume: opens the valve, monitors the device's _summation_delivered sensor and closes the valve when the configured volume has been delivered. Two safety nets bound a run that never reaches its target: a stall watchdog closes the valve if no water is measured for ~5 minutes, and an adaptive cap tightens the maximum runtime toward the measured flow rate (never beyond the safety timeout below).",
+      "description": "Opens the valve and closes it once the requested volume has been delivered. If no water flows, the valve is closed anyway after a few minutes.",
       "fields": {
         "device_id": {
           "name": "Irrigation valve",
-          "description": "The valve device to drive (only detected irrigation valves are listed)."
+          "description": "The valve to drive."
         },
         "switch_entity": {
           "name": "Valve",
@@ -68,11 +68,16 @@
         },
         "liters": {
           "name": "Liters",
-          "description": "Target volume to deliver, in liters."
+          "description": "Volume to deliver."
         },
         "timeout_seconds": {
-          "name": "Safety timeout (max run time)",
-          "description": "Maximum time the valve may stay open before it is forcibly closed, whether or not the target volume is reached. The adaptive cap only tightens this downward — closing sooner when the sampled flow rate says the run should already be done — never later. A stalled flow still closes the valve within ~5 minutes regardless. Defaults to 3600 (1 hour)."
+          "name": "Max run time [default 1 h]",
+          "description": "Forced close after this time, even if the volume was not reached."
+        }
+      },
+      "sections": {
+        "advanced": {
+          "name": "Advanced"
         }
       }
     }

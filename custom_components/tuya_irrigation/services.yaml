@@ -49,12 +49,18 @@ irrigation_by_liters:
           max: 10000
           unit_of_measurement: L
           mode: box
-    timeout_seconds:
-      required: false
-      default: 3600
-      selector:
-        number:
-          min: 60
-          max: 86400
-          unit_of_measurement: s
-          mode: box
+    # Collapsed section: the safety timeout is rarely changed, and its
+    # explanation was the bulk of the form on a phone. Section name/field
+    # strings live in strings.json (`sections` / `fields`).
+    advanced:
+      collapsed: true
+      fields:
+        timeout_seconds:
+          required: false
+          default: 3600
+          selector:
+            number:
+              min: 60
+              max: 86400
+              unit_of_measurement: s
+              mode: box

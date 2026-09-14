@@ -32,7 +32,7 @@ lines under a ZHA-named repo.
 - `_async_keepalive_poll` keeps its name and call site; its body became
   `_async_call_zha_layer(hass, service, switch_entity)`: skip with a debug log
   when the service is not registered, `async_call(..., blocking=True)` inside
-  a try/except that logs a WARNING. It cannot block or fail irrigation,
+  a try/except that logs at DEBUG. It cannot block or fail irrigation,
   exactly as before. `_async_push_device_time` and the settle are gone from
   `_async_begin_run`.
 

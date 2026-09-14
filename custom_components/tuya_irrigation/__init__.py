@@ -361,7 +361,12 @@ async def _async_call_zha_layer(
             ZHA_LAYER_DOMAIN, service, {"entity_id": switch_entity}, blocking=True
         )
     except Exception as err:  # noqa: BLE001 - best-effort, never raise
-        _LOGGER.warning(
+        # DEBUG, not WARNING: the startup sweep routinely lands while ZHA is
+        # still coming up or being reloaded by another quirk integration
+        # ("No gateway object exists", "ApplicationController is not
+        # running"), and the hourly sweep retries anyway. Same level the
+        # in-process keep-alive read used before it became a service call.
+        _LOGGER.debug(
             "%s.%s for %s failed (non-fatal): %s",
             ZHA_LAYER_DOMAIN, service, switch_entity, err,
         )

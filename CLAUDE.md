@@ -126,7 +126,7 @@ Everything that needs ZHA or zigpy lives in the sibling repo/integration **zha-t
 - **GiEX clock sync is not a service and is not called from here.** The quirk's `GiexEpoch2000MCUCluster.tuya_mcu_command` override emits the Tuya time frame + 1.5 s settle before every `on_off` = on DP, so a bare `switch.turn_on` from an automation gets a correct RTC too. `_async_begin_run` therefore has no time push and no settle any more.
 
 Rules:
-- The call is best-effort: skipped with a debug log when the service is not registered (`hass.services.has_service`), logged as a WARNING and swallowed when it raises. It must never block or fail irrigation.
+- The call is best-effort: skipped with a debug log when the service is not registered (`hass.services.has_service`), logged at DEBUG and swallowed when it raises (the startup sweep often races a ZHA reload). It must never block or fail irrigation.
 - `_async_check_zha_layer` (run at the start of every keep-alive sweep, i.e. at HA start and hourly) raises the repair issue `zha_layer_missing` when a discovered valve `device_is_zha` and the keep-alive service is absent, and deletes it otherwise. Strings live under `issues` in `strings.json` / `translations/*`.
 - Never import `homeassistant.components.zha`, `zigpy` or `zhaquirks` here. A new ZHA-only need (e.g. a per-DP "last report" timestamp for the soil card) goes into zha-tuya-quirks as an entity or a service, and this side consumes it by entity suffix / service name with a graceful fallback.
 - Constants: `ZHA_LAYER_DOMAIN`, `ZHA_LAYER_KEEPALIVE_SERVICE`, `ZHA_LAYER_ISSUE_ID` in `const.py`.

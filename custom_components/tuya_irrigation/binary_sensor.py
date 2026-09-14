@@ -1,9 +1,12 @@
 """'Irrigazione in corso' binary sensor for each detected irrigation valve.
 
 This entity has two jobs:
-  1. It attaches the tuya_irrigation integration to the valve's (ZHA) device by
-     reusing that device's identifiers/connections. That association is what
-     makes HA offer this integration's device actions for the valve.
+  1. It carries the valve's identifiers/connections (copied from the ZHA
+     device). Up to HA 2026.7 that merged it into the ZHA device; since 2026.8
+     (one device per config entry) HA keeps it on a *sibling* device of this
+     integration with the same identifiers and name. Either way it is what
+     makes HA offer this integration's device actions for the valve, and
+     `discovery.resolve_valve_device` maps the sibling back to the switch.
   2. It reflects the live state of the server-side irrigation timer, which is
      otherwise invisible. State is driven by a per-switch dispatcher signal sent
      from the services in __init__.py.

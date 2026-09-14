@@ -33,7 +33,7 @@ from .const import (
     SERVICE_IRRIGATION_BY_LITERS,
     SERVICE_IRRIGATION_BY_SECONDS,
 )
-from .discovery import device_is_valve, valve_switch_for_device
+from .discovery import resolve_valve_device, valve_switch_for_any_device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,8 +62,13 @@ ACTION_SCHEMA = cv.DEVICE_ACTION_BASE_SCHEMA.extend(
 async def async_get_actions(
     hass: HomeAssistant, device_id: str
 ) -> list[dict[str, str]]:
-    """Return the irrigation actions for a valve device (empty otherwise)."""
-    if not device_is_valve(hass, device_id):
+    """Return the irrigation actions for a valve device (empty otherwise).
+
+    HA asks for this integration's actions on the device that carries ITS
+    entities — since HA 2026.8 that is our sibling device (same identifiers as
+    the ZHA one, no switch), so resolve through the sibling-aware helper.
+    """
+    if resolve_valve_device(hass, device_id) is None:
         return []
     base = {CONF_DEVICE_ID: device_id, CONF_DOMAIN: DOMAIN}
     return [
@@ -94,7 +99,7 @@ async def async_call_action_from_config(
 ) -> None:
     """Execute the action by calling the existing irrigation service."""
     device_id = config[CONF_DEVICE_ID]
-    switch_entity = valve_switch_for_device(hass, device_id)
+    switch_entity = valve_switch_for_any_device(hass, device_id)
     if switch_entity is None:
         _LOGGER.warning(
             "No switch entity found on device %s; cannot run irrigation action",

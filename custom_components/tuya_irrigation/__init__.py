@@ -64,6 +64,7 @@ from .discovery import (
     device_has_battery,
     device_is_zha,
     find_valve_devices,
+    valve_switch_for_any_device,
     valve_switch_for_device,
 )
 from .history import IrrigationRunLog
@@ -115,13 +116,15 @@ def _switch_from_call(hass: HomeAssistant, call: ServiceCall) -> str:
     """Resolve the valve switch a service call addresses.
 
     `device_id` (the UI's device picker) is resolved through discovery to the
-    device's valve switch; `switch_entity` is taken as-is. A device that is not
-    a detected valve is a user error, reported as a ServiceValidationError so
-    the automation editor / Developer Tools show it instead of a traceback.
+    valve switch — accepting both the radio (ZHA) device and this integration's
+    own sibling device, which is the one the picker lists (see
+    `discovery.resolve_valve_device`); `switch_entity` is taken as-is. A device
+    that is neither is a user error, reported as a ServiceValidationError so the
+    automation editor / Developer Tools show it instead of a traceback.
     """
     device_id = call.data.get(ATTR_DEVICE_ID)
     if device_id:
-        switch_entity = valve_switch_for_device(hass, device_id)
+        switch_entity = valve_switch_for_any_device(hass, device_id)
         if switch_entity is None:
             raise ServiceValidationError(
                 f"Device {device_id} is not a detected irrigation valve "

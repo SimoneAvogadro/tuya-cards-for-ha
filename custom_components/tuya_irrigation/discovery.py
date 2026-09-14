@@ -136,3 +136,47 @@ def device_is_zha(hass: HomeAssistant, device_id: str) -> bool:
     return any(i[0] == "zha" for i in device.identifiers) or any(
         c[0] == dr.CONNECTION_ZIGBEE for c in device.connections
     )
+
+
+@callback
+def resolve_valve_device(hass: HomeAssistant, device_id: str) -> str | None:
+    """Map a device id to the device that actually carries the valve switch.
+
+    Since HA 2026.8 a device belongs to exactly one config entry, so this
+    integration's entities (the "Irrigating" binary_sensor, the history and
+    water-total sensors) live on a *sibling* device of their own — same
+    identifiers/connections as the radio integration's (ZHA) device, same user
+    name, but no switch. That sibling is what the UI hands us: it is the device
+    the service picker (`filter: integration: tuya_irrigation`) lists and the
+    device HA asks device actions for. Runs, however, are keyed by the switch,
+    which lives on the radio device.
+
+    Returns `device_id` itself when it is a valve device, else the id of the
+    sibling sharing an identifier or connection that is one, else None.
+    """
+    if device_is_valve(hass, device_id):
+        return device_id
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get(device_id)
+    if device is None:
+        return None
+    for other in dev_reg.devices:  # iterating the registry is the supported access
+        if other.id == device_id:
+            continue
+        if not (
+            (other.identifiers & device.identifiers)
+            or (other.connections & device.connections)
+        ):
+            continue
+        if device_is_valve(hass, other.id):
+            return other.id
+    return None
+
+
+@callback
+def valve_switch_for_any_device(hass: HomeAssistant, device_id: str) -> str | None:
+    """`valve_switch_for_device` that also accepts this integration's sibling device."""
+    valve_device = resolve_valve_device(hass, device_id)
+    if valve_device is None:
+        return None
+    return valve_switch_for_device(hass, valve_device)

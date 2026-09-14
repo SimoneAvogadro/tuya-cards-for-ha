@@ -1,7 +1,8 @@
 """Irrigation history sensors, one pair per detected valve.
 
-Two entities per valve, both attached to the valve's (ZHA) device by reusing its
-identifiers/connections (same merge trick as ``binary_sensor.py``):
+Two entities per valve, both carrying the valve's identifiers/connections (same
+device association as ``binary_sensor.py`` — a sibling device of the ZHA one
+since HA 2026.8, merged into it before):
 
   * ``sensor.<prefix>_irrigation_history`` — state is the timestamp of the last
     completed run; its ``runs`` attribute carries the recent run list the card

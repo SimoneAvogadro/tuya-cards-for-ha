@@ -206,6 +206,11 @@ name: Irrigatore 31  # optional, defaults to friendly_name
 
 Compact card for Tuya soil probes — soil moisture, temperature and air humidity in a three-column layout (two columns on 2-in-1 probes without an air channel), with a colored progress bar for soil moisture.
 
+<p>
+  <img src="docs/images/soil-moisture-card.png" alt="Soil moisture card, closed: soil, temperature and air readings with the soil bar" width="420">
+  <img src="docs/images/soil-moisture-card-trend.png" alt="Soil moisture card with the temperature trend panel open on the week view" width="420">
+</p>
+
 - **Configurable thresholds**: optimal (green) and acceptable (yellow) ranges per plant; outside acceptable = red.
 - **Auto-discovery** from a single `_soil_moisture` sensor; **visual editor** with threshold config; **battery indicator** with a **Zigbee signal icon** to its left (see [Signal quality icon](#signal-quality-icon)).
 - **Trend panel**: tap a reading (soil, temperature or air) to open a section under the readings — same look as the energy-statistics panel of the [Tuya ZHA power-switch card](https://github.com/SimoneAvogadro/zha-tuya-quirks). **Day** shows the recorded trend of the value; **Week** and **Month** show two lines, the daily min and max, with a band between them. The header gives the period's min – max and mean; tap a point (or a day) to read it, `◀` / `▶` step through periods. Tap the open column to close it, another column to switch metric. Data comes straight from the recorder — raw history for the day view (falls back to hourly statistics beyond the recorder's retention), long-term daily statistics for week / month — so nothing needs to be configured.

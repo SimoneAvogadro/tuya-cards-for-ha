@@ -9,6 +9,10 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * (unreleased) — Drop the "Manual" action button and its `manual_seconds`
+ *          option: it was only a shortcut for a fixed-length Time run. The
+ *          action row keeps Liters + Time; an existing `manual_seconds:` in a
+ *          dashboard config is ignored.
  * v2.10.0 — Zigbee signal-quality icon (WiFi-style arcs) to the left of the
  *          battery when the device exposes sensor.<prefix>_lqi / _rssi (ZHA,
  *          diagnostic, disabled by default) or _linkquality (Z2M). LQI first,
@@ -109,7 +113,7 @@ const I18N = {
     irrigating: "Irrigando", paused: "In pausa", off: "Spento",
     starting: "Avvio…", startFailed: "Avvio fallito",
     stopping: "Arresto…", stopFailed: "Arresto fallito",
-    dispenseFor: "Eroga per:", liters: "Litri", time: "Tempo", manual: "Manuale",
+    dispenseFor: "Eroga per:", liters: "Litri", time: "Tempo",
     remaining: "rimanente",
     repeats: "Ripetizioni", cycles: "Cicli", cycleInterval: "Intervallo cicli",
     last: "Ultima",
@@ -123,8 +127,6 @@ const I18N = {
     editorNoDevice: "Nessun dispositivo irrigazione compatibile",
     editorName: "Nome (opzionale)", editorNamePh: "Nome personalizzato",
     editorNameHint: "Lascia vuoto per usare il nome del dispositivo",
-    editorManualSec: "Durata test manuale (secondi)",
-    editorManualSecHint: "Quanto dura la prova rapida quando premi il pulsante Manuale (30–1800 s)",
     configError: "Seleziona un dispositivo irrigazione nella configurazione",
     defaultName: "Irrigazione",
     integrationMissing: "Installa l'integrazione Tuya Irrigation per abilitare il controllo",
@@ -136,7 +138,7 @@ const I18N = {
     irrigating: "Irrigating", paused: "Paused", off: "Off",
     starting: "Starting…", startFailed: "Start failed",
     stopping: "Stopping…", stopFailed: "Stop failed",
-    dispenseFor: "Dispense for:", liters: "Liters", time: "Time", manual: "Manual",
+    dispenseFor: "Dispense for:", liters: "Liters", time: "Time",
     remaining: "remaining",
     repeats: "Repeats", cycles: "Cycles", cycleInterval: "Cycle interval",
     last: "Last",
@@ -150,8 +152,6 @@ const I18N = {
     editorNoDevice: "No compatible irrigation device found",
     editorName: "Name (optional)", editorNamePh: "Custom name",
     editorNameHint: "Leave empty to use device name",
-    editorManualSec: "Manual test duration (seconds)",
-    editorManualSecHint: "How long the quick test runs when you press Manual (30–1800 s)",
     configError: "Select an irrigation device in the configuration",
     defaultName: "Irrigation",
     integrationMissing: "Install the Tuya Irrigation integration to enable control",
@@ -163,7 +163,7 @@ const I18N = {
     irrigating: "灌溉中", paused: "已暂停", off: "关闭",
     starting: "启动中…", startFailed: "启动失败",
     stopping: "停止中…", stopFailed: "停止失败",
-    dispenseFor: "灌溉方式：", liters: "升量", time: "时长", manual: "手动",
+    dispenseFor: "灌溉方式：", liters: "升量", time: "时长",
     remaining: "剩余",
     repeats: "重复", cycles: "循环次数", cycleInterval: "循环间隔",
     last: "上次",
@@ -177,8 +177,6 @@ const I18N = {
     editorNoDevice: "未找到兼容的灌溉设备",
     editorName: "名称（可选）", editorNamePh: "自定义名称",
     editorNameHint: "留空使用设备名称",
-    editorManualSec: "手动测试时长（秒）",
-    editorManualSecHint: "按下手动按钮时快速测试的持续时间（30–1800 秒）",
     configError: "请在配置中选择灌溉设备",
     defaultName: "灌溉",
     integrationMissing: "请安装 Tuya Irrigation 集成以启用控制",
@@ -280,11 +278,6 @@ select:focus,input:focus{border-color:#4a90d9}
     <input type="text" id="nm" placeholder="${t("editorNamePh")}">
     <div class="hint">${t("editorNameHint")}</div>
   </div>
-  <div class="row">
-    <label>${t("editorManualSec")}</label>
-    <input type="number" id="ms" min="30" max="1800" step="30">
-    <div class="hint">${t("editorManualSecHint")}</div>
-  </div>
 </div>`;
     const r = this.shadowRoot;
     this._el = {
@@ -292,7 +285,6 @@ select:focus,input:focus{border-color:#4a90d9}
       swWrap: r.getElementById("sw-wrap"),
       swEmpty: r.getElementById("sw-empty"),
       nm: r.getElementById("nm"),
-      ms: r.getElementById("ms"),
     };
     this._el.sw.addEventListener("change", e => {
       this._config = { ...this._config, switch: e.target.value };
@@ -308,12 +300,6 @@ select:focus,input:focus{border-color:#4a90d9}
       else { const { name, ...rest } = this._config; this._config = rest; }
     });
     this._el.nm.addEventListener("change", () => this._fire());
-    this._el.ms.addEventListener("change", e => {
-      const v = parseInt(e.target.value);
-      if (Number.isFinite(v) && v >= 30 && v <= 1800) this._config = { ...this._config, manual_seconds: v };
-      else { const { manual_seconds, ...rest } = this._config; this._config = rest; }
-      this._fire();
-    });
     this._domBuilt = true;
   }
 
@@ -323,7 +309,6 @@ select:focus,input:focus{border-color:#4a90d9}
     const compat = findCompatible(this._hass);
     const cur = this._config.switch || "";
     const nm = this._config.name || "";
-    const ms = String(this._config.manual_seconds ?? 300);
     const ae = this.shadowRoot.activeElement;
     const hasCompat = compat.length > 0;
 
@@ -350,7 +335,6 @@ select:focus,input:focus{border-color:#4a90d9}
     // Never overwrite an input the user is currently editing — that's what
     // resets the caret and makes the dialog feel "rebuilt".
     if (ae !== this._el.nm && this._el.nm.value !== nm) this._el.nm.value = nm;
-    if (ae !== this._el.ms && this._el.ms.value !== ms) this._el.ms.value = ms;
   }
 
   _fire() { this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true })); }
@@ -386,18 +370,13 @@ class IrrigationControlCard extends HTMLElement {
   }
 
   static getConfigElement() { return document.createElement("irrigation-control-card-editor"); }
-  static getStubConfig() { return { switch: "", name: "", manual_seconds: 300 }; }
+  static getStubConfig() { return { switch: "", name: "" }; }
 
   setConfig(config) {
     if (config.entities?.switch) this._entities = config.entities;
     else if (config.switch) this._entities = buildEntities(config.switch);
     else throw new Error(_t(this._hass, "configError"));
     this._configName = config.name || "";
-    // Quick-test duration for the Manual shortcut button. Clamped to a sane
-    // range so a typo can't fire a 5-hour irrigation. Default 5 min covers
-    // sprinkler tests; user can stop early via the Tempo panel's stop button.
-    const rawManual = parseInt(config.manual_seconds);
-    this._manualSec = (Number.isFinite(rawManual) && rawManual >= 30 && rawManual <= 1800) ? rawManual : 300;
     this._config = config;
     this._domCreated = false;
     if (this._hass) this._render();
@@ -599,25 +578,6 @@ class IrrigationControlCard extends HTMLElement {
     this._beginStopping();
     await this._svc("switch", "turn_off", { entity_id: this._entities.switch });
   }
-  // One-shot shortcut: opens the Tempo panel, fills it with `_manualSec`,
-  // and starts immediately. The "Manual" button has no persistent active
-  // state — once clicked, the user is in Tempo mode and can stop early via
-  // the standard Tempo stop button.
-  async _startManual() {
-    if (this._isOffline() || this._starting || this._stopping) return;
-    if (!this._integrationAvailable()) { console.warn("[irrigation-control-card] tuya_irrigation integration not installed"); return; }
-    const tot = this._manualSec;
-    this._mode = "tempo";
-    this._inputMin = Math.floor(tot / 60);
-    this._inputSec = tot % 60;
-    this._userEditedTempo = true;
-    this._beginStarting("tempo", tot);
-    await this._svc("tuya_irrigation", "irrigation_by_seconds", {
-      switch_entity: this._entities.switch,
-      seconds: tot,
-    });
-  }
-
   // ── Render tick (device-truth progress) ──
   // While the valve is open we re-render every second so the countdown digits and
   // progress bar advance. The values are derived from the device's start_time /
@@ -1043,7 +1003,6 @@ input[type=number]{-moz-appearance:textfield}
       <div class="ar">
         <button class="ab ${this._mode==="litri"?"ac":""}" id="bl"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg>${t("liters")}</button>
         <button class="ab ${this._mode==="tempo"?"ac":""}" id="bt"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${t("time")}</button>
-        <button class="ab" id="bm" title="${this._manualSec >= 60 ? Math.round(this._manualSec/60)+'′' : this._manualSec+'″'}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"/></svg>${t("manual")}</button>
       </div>
       <div class="ip ${this._mode==="litri"?"vi":""}" id="ip-litri"><div>
         <div class="ir">
@@ -1101,7 +1060,7 @@ input[type=number]{-moz-appearance:textfield}
     this._el = {
       tt: q(".tt"), bf: q(".bf"), battPct: q(".batt-pct"), badge: q(".badge"),
       battWrap: $("bt-wrap"), sqWrap: $("sq-wrap"),
-      bl: $("bl"), bt: $("bt"), bm: $("bm"),
+      bl: $("bl"), bt: $("bt"),
       ipLitri: $("ip-litri"), ipTempo: $("ip-tempo"),
       vl: $("vl"), gl: $("gl"),
       tg: q(".tg"), tMin: $("t-min"), tSec: $("t-sec"), tp: q(".tp"),
@@ -1123,7 +1082,6 @@ input[type=number]{-moz-appearance:textfield}
     const el = this._el;
     el.bl?.addEventListener("click", () => this._selectMode("litri"));
     el.bt?.addEventListener("click", () => this._selectMode("tempo"));
-    el.bm?.addEventListener("click", () => this._startManual());
     el.gl?.addEventListener("click", () => { if (this._starting || this._stopping) return; if (this._isOn() && this._mode === "litri") this._stopLitri(); else this._startLitri(); });
     el.gt?.addEventListener("click", () => this._toggleTimer());
     el.vl?.addEventListener("change", ev => { this._inputLitri = Math.max(1, Math.min(999, parseInt(ev.target.value) || 1)); this._userEditedLitri = true; });

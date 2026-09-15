@@ -9,6 +9,12 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * (unreleased) — Signal icon: when the suffix-derived `_lqi` / `_rssi` /
+ *          `_linkquality` sensors do not exist, look them up on the primary
+ *          entity's device via the entity registry (`hass.entities`), so a
+ *          valve whose irrigation entities carry another prefix (SONOFF SWV
+ *          via zha-sonoff-quirks: area-named entities, device-named ZHA
+ *          diagnostics) or a renamed entity gets the icon too (sqResolve).
  * (unreleased) — Drop the "Manual" action button and its `manual_seconds`
  *          option: it was only a shortcut for a fixed-length Time run. The
  *          action row keeps Liters + Time; an existing `manual_seconds:` in a
@@ -840,7 +846,7 @@ class IrrigationControlCard extends HTMLElement {
     const isOn = this._isOn();
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
-    const sq = sqRead(this._hass, e);
+    const sq = sqRead(this._hass, e, e.switch);
     const cyc = this._nv(e.cycles); const schedOn = cyc > 1;
     const ivS = this._nv(e.interval);
     const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
@@ -1123,7 +1129,7 @@ input[type=number]{-moz-appearance:textfield}
     this._txt(el.tt, name);
     const offline = this._isOffline();
     if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
-    sqApply(el.sqWrap, sqRead(this._hass, e), offline);
+    sqApply(el.sqWrap, sqRead(this._hass, e, e.switch), offline);
     if (!offline) {
       if (el.bf) el.bf.style.width = Math.min(100, batt) + "%";
       if (el.battPct) this._txt(el.battPct, Math.round(batt) + "%");
@@ -1986,13 +1992,47 @@ function sqNum(hass, eid) {
   return Number.isFinite(v) ? v : null;
 }
 
-// ids: { lqi, linkquality, rssi } entity ids (any may be missing).
+// Device fallback for the suffix convention. The cards derive
+// `sensor.<prefix>_lqi` from their primary entity, but a device whose entities
+// carry different prefixes (e.g. a valve driven by a companion quirk whose
+// entities are named after the *area*, while ZHA's own lqi/rssi keep the
+// device prefix, or a renamed entity) never matches that way. For every
+// signal key whose suffix-derived id has no state, look the entity up on the
+// anchor entity's device through the entity-registry display map the frontend
+// already ships in `hass.entities` (entity_id → { device_id, … }). Only
+// entities that also have a state are accepted, so a disabled diagnostic
+// entity keeps the icon hidden exactly as before. Returns a new ids object.
+function sqResolve(hass, ids, anchor) {
+  // Local, not top-level: this file holds only function declarations (TDZ, see header).
+  const SQ_SUFFIX = { lqi: "_lqi", linkquality: "_linkquality", rssi: "_rssi" };
+  const has = (eid) => !!eid && hass?.states?.[eid] !== undefined;
+  const out = { ...(ids || {}) };
+  const missing = Object.keys(SQ_SUFFIX).filter(k => !has(out[k]));
+  if (!missing.length) return out;
+  const reg = hass?.entities;
+  const dev = anchor && reg ? reg[anchor]?.device_id : null;
+  if (!dev) return out;
+  for (const ent of Object.values(reg)) {
+    if (!ent || ent.device_id !== dev) continue;
+    const eid = ent.entity_id;
+    if (typeof eid !== "string" || !eid.startsWith("sensor.")) continue;
+    for (const k of missing) {
+      if (eid.endsWith(SQ_SUFFIX[k]) && has(eid)) out[k] = eid;
+    }
+  }
+  return out;
+}
+
+// ids: { lqi, linkquality, rssi } entity ids (any may be missing); `anchor` is
+// the card's primary entity, used by sqResolve to find the signal entities on
+// the same device when the suffix-derived ids do not exist.
 // Returns { present, lqi, rssi, level, title }. `present` is true when at least
 // one of the entities exists in hass.states — that decides whether the icon is
 // rendered at all; `level` 0 with `present` true means the entity is there but
 // currently has no numeric value (unavailable / unknown).
-function sqRead(hass, ids) {
+function sqRead(hass, rawIds, anchor) {
   const has = (eid) => !!eid && hass?.states?.[eid] !== undefined;
+  const ids = sqResolve(hass, rawIds, anchor);
   const present = has(ids?.lqi) || has(ids?.linkquality) || has(ids?.rssi);
   const lqi = sqNum(hass, ids?.lqi) ?? sqNum(hass, ids?.linkquality);
   const rssi = sqNum(hass, ids?.rssi);
@@ -2057,6 +2097,10 @@ function sqApply(wrap, info, hidden) {
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
+ * (unreleased) — Signal icon: when the suffix-derived `_lqi` / `_rssi` /
+ *          `_linkquality` sensors do not exist, look them up on the probe's
+ *          device via the entity registry (`hass.entities`), so a renamed
+ *          entity or a probe with mixed prefixes gets the icon too (sqResolve).
  * v1.7.0 — Zigbee signal-quality icon (WiFi-style arcs) to the left of the
  *          battery when the probe exposes sensor.<prefix>_lqi / _rssi (ZHA,
  *          diagnostic, disabled by default) or _linkquality (Z2M). LQI first,
@@ -2507,7 +2551,7 @@ class SoilMoistureCard extends HTMLElement {
     const hum = this._nv(e.humidity);
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
-    const sq = sqRead(this._hass, e);
+    const sq = sqRead(this._hass, e, e.soil_moisture);
     const hasHum = this._hass.states[e.humidity] !== undefined;
     // "N min ago" sits in the last column on the same row as the soil bar,
     // so it adds no height to the card.
@@ -2678,7 +2722,7 @@ ${sqCss()}
     if (el.offBanner) el.offBanner.style.display = offline ? "flex" : "none";
     if (el.offBadge) el.offBadge.style.display = offline ? "inline-block" : "none";
     if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
-    sqApply(el.sqWrap, sqRead(this._hass, e), offline);
+    sqApply(el.sqWrap, sqRead(this._hass, e, e.soil_moisture), offline);
 
     this._txt(el.upd, this._updatedText());
     if (this._panel) this._panel.hass = this._hass;

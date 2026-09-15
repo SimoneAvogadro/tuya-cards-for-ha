@@ -1,6 +1,12 @@
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
+ * (unreleased) — Signal icon: when the suffix-derived `_lqi` / `_rssi` /
+ *          `_linkquality` sensors do not exist, look them up on the primary
+ *          entity's device via the entity registry (`hass.entities`), so a
+ *          valve whose irrigation entities carry another prefix (SONOFF SWV
+ *          via zha-sonoff-quirks: area-named entities, device-named ZHA
+ *          diagnostics) or a renamed entity gets the icon too (sqResolve).
  * (unreleased) — Drop the "Manual" action button and its `manual_seconds`
  *          option: it was only a shortcut for a fixed-length Time run. The
  *          action row keeps Liters + Time; an existing `manual_seconds:` in a
@@ -832,7 +838,7 @@ class IrrigationControlCard extends HTMLElement {
     const isOn = this._isOn();
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
-    const sq = sqRead(this._hass, e);
+    const sq = sqRead(this._hass, e, e.switch);
     const cyc = this._nv(e.cycles); const schedOn = cyc > 1;
     const ivS = this._nv(e.interval);
     const ivH = Math.floor(ivS / 3600), ivM = Math.floor((ivS % 3600) / 60);
@@ -1115,7 +1121,7 @@ input[type=number]{-moz-appearance:textfield}
     this._txt(el.tt, name);
     const offline = this._isOffline();
     if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
-    sqApply(el.sqWrap, sqRead(this._hass, e), offline);
+    sqApply(el.sqWrap, sqRead(this._hass, e, e.switch), offline);
     if (!offline) {
       if (el.bf) el.bf.style.width = Math.min(100, batt) + "%";
       if (el.battPct) this._txt(el.battPct, Math.round(batt) + "%");

@@ -256,6 +256,7 @@ Both cards show a small WiFi-style icon (three arcs + dot) to the left of the ba
 
 - **ZHA**: `sensor.<prefix>_lqi` and `sensor.<prefix>_rssi` are *diagnostic* entities, **disabled by default**. Enable at least one from the device page (Settings → Devices & Services → the device → "+N entities not shown" → enable). LQI is preferred; RSSI is used only when it is the sole one enabled.
 - **Zigbee2MQTT**: `sensor.<prefix>_linkquality` is created automatically.
+- **Different prefix?** When the signal entities don't share the card's prefix (e.g. a valve whose irrigation entities come from a companion quirk and are named after the area, while ZHA's own `_lqi` / `_rssi` keep the device name, or a renamed entity), the cards fall back to the entity registry and take the `_lqi` / `_linkquality` / `_rssi` sensors that sit on the **same device** as the card's primary entity. Still nothing to configure.
 
 | Arcs lit | LQI (0–255) | RSSI (fallback) |
 |---|---|---|

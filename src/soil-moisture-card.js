@@ -1,6 +1,10 @@
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
+ * (unreleased) — Signal icon: when the suffix-derived `_lqi` / `_rssi` /
+ *          `_linkquality` sensors do not exist, look them up on the probe's
+ *          device via the entity registry (`hass.entities`), so a renamed
+ *          entity or a probe with mixed prefixes gets the icon too (sqResolve).
  * v1.7.0 — Zigbee signal-quality icon (WiFi-style arcs) to the left of the
  *          battery when the probe exposes sensor.<prefix>_lqi / _rssi (ZHA,
  *          diagnostic, disabled by default) or _linkquality (Z2M). LQI first,
@@ -451,7 +455,7 @@ class SoilMoistureCard extends HTMLElement {
     const hum = this._nv(e.humidity);
     const batt = this._nv(e.battery);
     const hasBatt = this._hass.states[e.battery] !== undefined;
-    const sq = sqRead(this._hass, e);
+    const sq = sqRead(this._hass, e, e.soil_moisture);
     const hasHum = this._hass.states[e.humidity] !== undefined;
     // "N min ago" sits in the last column on the same row as the soil bar,
     // so it adds no height to the card.
@@ -622,7 +626,7 @@ ${sqCss()}
     if (el.offBanner) el.offBanner.style.display = offline ? "flex" : "none";
     if (el.offBadge) el.offBadge.style.display = offline ? "inline-block" : "none";
     if (el.battWrap) el.battWrap.style.display = offline ? "none" : "flex";
-    sqApply(el.sqWrap, sqRead(this._hass, e), offline);
+    sqApply(el.sqWrap, sqRead(this._hass, e, e.soil_moisture), offline);
 
     this._txt(el.upd, this._updatedText());
     if (this._panel) this._panel.hass = this._hass;

@@ -28,6 +28,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import target as target_helpers
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -37,7 +38,6 @@ from homeassistant.helpers.start import async_at_started
 from homeassistant.setup import async_when_setup
 
 from .const import (
-    ATTR_DEVICE_ID,
     ATTR_LITERS,
     ATTR_SECONDS,
     ATTR_SWITCH_ENTITY,
@@ -87,29 +87,34 @@ _OPEN_CONFIRM_TIMEOUT_S = 10.0
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
-# The valve can be addressed either by its switch entity (what the card, the
-# device actions and pre-2.14 automations send) or by its device (what the
-# service UI offers: a device picker filtered to devices carrying this
-# integration's entities, i.e. exactly the detected valves). At least one of the
-# two is required; device_id wins when both are given.
+# The valve can be addressed either by its switch entity (`switch_entity`: what
+# the card and pre-2.14 automations send) or by a standard HA service *target*
+# (device / entity / area / floor / label): `services.yaml` declares a `target:`
+# filtered to this integration, which is what makes the two services appear in
+# the automation editor's "by target" tab for a valve device and gives them the
+# regular target picker. HA merges `target` into `call.data` before validation,
+# so the target keys are plain data fields here (`cv.ENTITY_SERVICE_FIELDS`
+# accepts each of them as a string or a list). At least one of the two forms is
+# required; the target wins when both are given. A target must resolve to
+# exactly ONE detected valve (see `_switch_from_call`).
 SECONDS_SCHEMA = vol.All(
     vol.Schema(
         {
             vol.Optional(ATTR_SWITCH_ENTITY): cv.entity_id,
-            vol.Optional(ATTR_DEVICE_ID): cv.string,
+            **cv.ENTITY_SERVICE_FIELDS,
             vol.Required(ATTR_SECONDS): vol.All(
                 vol.Coerce(int), vol.Range(min=1, max=43200)
             ),
         }
     ),
-    cv.has_at_least_one_key(ATTR_SWITCH_ENTITY, ATTR_DEVICE_ID),
+    cv.has_at_least_one_key(ATTR_SWITCH_ENTITY, *cv.ENTITY_SERVICE_FIELDS),
 )
 
 LITERS_SCHEMA = vol.All(
     vol.Schema(
         {
             vol.Optional(ATTR_SWITCH_ENTITY): cv.entity_id,
-            vol.Optional(ATTR_DEVICE_ID): cv.string,
+            **cv.ENTITY_SERVICE_FIELDS,
             vol.Required(ATTR_LITERS): vol.All(
                 vol.Coerce(float), vol.Range(min=0.001, max=10000)
             ),
@@ -118,30 +123,78 @@ LITERS_SCHEMA = vol.All(
             ),
         }
     ),
-    cv.has_at_least_one_key(ATTR_SWITCH_ENTITY, ATTR_DEVICE_ID),
+    cv.has_at_least_one_key(ATTR_SWITCH_ENTITY, *cv.ENTITY_SERVICE_FIELDS),
 )
+
+
+@callback
+def _valve_switches_for_target(
+    hass: HomeAssistant, selection: target_helpers.TargetSelection
+) -> set[str]:
+    """Resolve a service target to the valve switch entities it designates.
+
+    Devices (given directly, or reached through an area / floor / label) go
+    through `valve_switch_for_any_device`, which accepts the radio (ZHA) device
+    as well as any sibling device an old automation may still reference. An
+    entity target is either a valve switch itself or one of this integration's
+    entities on the valve device (what the target picker's entity filter
+    offers), so it is mapped through its registry device. Anything that is not
+    a detected valve is simply dropped; the caller decides what an empty or a
+    plural result means.
+    """
+    extracted = target_helpers.async_extract_referenced_entity_ids(
+        hass, selection, expand_group=False, primary_entities_only=False
+    )
+    ent_reg = er.async_get(hass)
+    switches: set[str] = set()
+    for device_id in extracted.referenced_devices:
+        if (switch := valve_switch_for_any_device(hass, device_id)) is not None:
+            switches.add(switch)
+    for entity_id in extracted.referenced:
+        entry = ent_reg.async_get(entity_id)
+        if entry is None or entry.device_id is None:
+            continue
+        if (switch := valve_switch_for_any_device(hass, entry.device_id)) is None:
+            continue
+        # A valve device with several switches would resolve them all to the
+        # first one; only accept the entity when it IS the valve switch or is
+        # not a switch at all (binary_sensor / sensor of the same device).
+        if entry.domain == "switch" and entity_id != switch:
+            continue
+        switches.add(switch)
+    return switches
 
 
 def _switch_from_call(hass: HomeAssistant, call: ServiceCall) -> str:
     """Resolve the valve switch a service call addresses.
 
-    `device_id` (the UI's device picker) is resolved through discovery to the
-    valve switch — accepting both the radio (ZHA) device and this integration's
-    own sibling device, which is the one the picker lists (see
-    `discovery.resolve_valve_device`); `switch_entity` is taken as-is. A device
-    that is neither is a user error, reported as a ServiceValidationError so the
-    automation editor / Developer Tools show it instead of a traceback.
+    A target (device / entity / area / floor / label, merged into `call.data`
+    by HA) is resolved through discovery to the valve switches it contains and
+    must name exactly one valve: a run is keyed by its switch, and irrigating
+    several valves at once from one call would hide which one an error or a
+    stall notification is about — an automation that wants two valves adds two
+    actions. Without a target, `switch_entity` is taken as-is. Both failure
+    modes are user errors, reported as ServiceValidationError so the automation
+    editor / Developer Tools show the message instead of a traceback.
     """
-    device_id = call.data.get(ATTR_DEVICE_ID)
-    if device_id:
-        switch_entity = valve_switch_for_any_device(hass, device_id)
-        if switch_entity is None:
-            raise ServiceValidationError(
-                f"Device {device_id} is not a detected irrigation valve "
-                "(it needs a switch and a water-volume sensor)"
-            )
+    selection = target_helpers.TargetSelection(call.data)
+    if not selection.has_any_target:
+        # `device_id: none` & co. pass the schema but select nothing.
+        if (switch_entity := call.data.get(ATTR_SWITCH_ENTITY)) is None:
+            raise ServiceValidationError("No irrigation valve was targeted")
         return switch_entity
-    return call.data[ATTR_SWITCH_ENTITY]
+    switches = _valve_switches_for_target(hass, selection)
+    if not switches:
+        raise ServiceValidationError(
+            "The target contains no detected irrigation valve "
+            "(a valve device needs a switch and a water-volume sensor)"
+        )
+    if len(switches) > 1:
+        raise ServiceValidationError(
+            "The target contains several irrigation valves "
+            f"({', '.join(sorted(switches))}); pick one valve per action"
+        )
+    return next(iter(switches))
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

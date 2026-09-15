@@ -10,16 +10,6 @@
       "already_configured": "Tuya Irrigation is already set up."
     }
   },
-  "device_automation": {
-    "action_type": {
-      "irrigate_liters": "Liters🪣💧 (🌱irrigate by volume)",
-      "irrigate_seconds": "Duration⏰💧 (🌱irrigate by time)"
-    },
-    "extra_fields": {
-      "liters": "Liters",
-      "duration": "Duration"
-    }
-  },
   "entity": {
     "binary_sensor": {
       "irrigating": {
@@ -40,10 +30,6 @@
       "name": "Seconds⏰💧 (🌱timed irrigation)",
       "description": "Opens the valve for N seconds, then closes it. The timer runs in Home Assistant, so it works with the browser closed and even if the valve's own timer is unreliable.",
       "fields": {
-        "device_id": {
-          "name": "Irrigation valve",
-          "description": "The valve to drive."
-        },
         "switch_entity": {
           "name": "Valve",
           "description": "The switch entity that controls the irrigation valve."
@@ -58,10 +44,6 @@
       "name": "Liters🪣💧 (🌱volume irrigation)",
       "description": "Opens the valve and closes it once the requested volume has been delivered. If no water flows, the valve is closed anyway after a few minutes.",
       "fields": {
-        "device_id": {
-          "name": "Irrigation valve",
-          "description": "The valve to drive."
-        },
         "switch_entity": {
           "name": "Valve",
           "description": "The switch entity that controls the irrigation valve."

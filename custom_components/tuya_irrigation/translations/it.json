@@ -10,16 +10,6 @@
       "already_configured": "Tuya Irrigation è già configurato."
     }
   },
-  "device_automation": {
-    "action_type": {
-      "irrigate_liters": "Litri🪣💧 (🌱irriga a volume)",
-      "irrigate_seconds": "Durata⏰💧 (🌱irriga a tempo)"
-    },
-    "extra_fields": {
-      "liters": "Litri",
-      "duration": "Durata"
-    }
-  },
   "entity": {
     "binary_sensor": {
       "irrigating": {
@@ -40,10 +30,6 @@
       "name": "Secondi⏰💧 (🌱irrigazione a tempo)",
       "description": "Apre la valvola per N secondi e poi la richiude. Il timer gira in Home Assistant: funziona a browser chiuso e anche se il timer della valvola è inaffidabile.",
       "fields": {
-        "device_id": {
-          "name": "Valvola di irrigazione",
-          "description": "La valvola da comandare."
-        },
         "switch_entity": {
           "name": "Valvola",
           "description": "L'entita' switch che comanda la valvola di irrigazione."
@@ -58,10 +44,6 @@
       "name": "Litri🪣💧 (🌱irrigazione a volume)",
       "description": "Apre la valvola e la richiude quando sono stati erogati i litri richiesti. Se l'acqua non scorre, la chiude comunque dopo qualche minuto.",
       "fields": {
-        "device_id": {
-          "name": "Valvola di irrigazione",
-          "description": "La valvola da comandare."
-        },
         "switch_entity": {
           "name": "Valvola",
           "description": "L'entita' switch che comanda la valvola di irrigazione."

@@ -22,7 +22,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services + device actions + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves (radio side in zha-tuya-quirks) | v2.13.0 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services (HA service **target**: listed in the automation editor's "by target" tab for every valve device) + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves (radio side in zha-tuya-quirks) | v2.13.0 |
 | `irrigation-control-card` | Lovelace card driving the services above, with battery + Zigbee signal icon | v2.10.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature (+ optional air humidity) sensors, with a tap-to-open trend panel (day / week / month) and a Zigbee signal icon | v1.7.0 |
 
@@ -49,19 +49,21 @@ Opens the valve, waits N seconds **server-side**, closes it — independent of t
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `device_id` | device | one of the two | The valve **device** — what the UI offers: a device picker listing only the detected irrigation valves |
-| `switch_entity` | entity_id (switch) | one of the two | The valve switch, for YAML / the card / existing automations (`device_id` wins if both are given) |
+| `target` | device / entity / area / label | one of the two | The valve, as a standard HA target — what the UI offers (device picker and "Irrigating" entity picker, both listing only the detected valves). Must contain exactly **one** valve; use one action per valve |
+| `switch_entity` | entity_id (switch) | one of the two | The valve switch, for YAML / the card / existing automations (the target wins if both are given) |
 | `seconds` | int [1, 43200] | yes | How long to keep the valve open |
 
 ```yaml
-- service: tuya_irrigation.irrigation_by_seconds
-  data:
+- action: tuya_irrigation.irrigation_by_seconds
+  target:
     device_id: 1f2e3d4c5b6a…          # as picked in the UI
+  data:
     seconds: 600   # 10 minutes
-# or, by entity:
+# or, by switch entity:
 #   data:
 #     switch_entity: switch.tze200_a7sghmms_ts0601
 #     seconds: 600
+# Automations saved before 2.14 with `data: {device_id: …}` keep working unchanged.
 ```
 
 ### `tuya_irrigation.irrigation_by_liters`
@@ -70,15 +72,16 @@ Opens the valve, watches `sensor.<prefix>_summation_delivered`, closes when the 
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `device_id` | device | one of the two | The valve **device** — what the UI offers: a device picker listing only the detected irrigation valves |
-| `switch_entity` | entity_id (switch) | one of the two | The valve switch, for YAML / the card / existing automations (`device_id` wins if both are given) |
+| `target` | device / entity / area / label | one of the two | The valve, as a standard HA target — what the UI offers (device picker and "Irrigating" entity picker, both listing only the detected valves). Must contain exactly **one** valve; use one action per valve |
+| `switch_entity` | entity_id (switch) | one of the two | The valve switch, for YAML / the card / existing automations (the target wins if both are given) |
 | `liters` | number [0.001, 10000] | yes | Target volume to deliver |
 | `timeout_seconds` | int [60, 86400] | no (default 3600) | Safety timeout — max time the valve may stay open; the adaptive cap only tightens it downward, never extends it |
 
 ```yaml
-- service: tuya_irrigation.irrigation_by_liters
+- action: tuya_irrigation.irrigation_by_liters
+  target:
+    device_id: 1f2e3d4c5b6a…          # as picked in the UI
   data:
-    switch_entity: switch.tze200_a7sghmms_ts0601
     liters: 10
     timeout_seconds: 1800
 ```
@@ -136,16 +139,18 @@ The event name is deliberately un-namespaced so other irrigation integrations ca
 
 ---
 
-## Device actions (automation builder)
+## Automation editor: "by target"
 
-When you build an automation by **selecting a device first**, any recognized irrigation valve gains two extra actions:
+When you add an action by **selecting the valve device first** (the "By target" tab of the add-action dialog), the two services are listed for it next to the plain switch on/off ones, under a "Tuya Irrigation" group:
 
 | Action | Field | Calls |
 | --- | --- | --- |
-| **Litri🪣💧 (🌱irriga a volume)** / *Liters🪣💧 (🌱irrigate by volume)* | Liters | `irrigation_by_liters` (adaptive safety cap, 3600 s max) |
-| **Durata⏰💧 (🌱irriga a tempo)** / *Duration⏰💧 (🌱irrigate by time)* | Duration (hh:mm:ss) | `irrigation_by_seconds` |
+| **Litri🪣💧 (🌱irrigazione a volume)** / *Liters🪣💧 (🌱volume irrigation)* | Liters | `irrigation_by_liters` (adaptive safety cap, 3600 s max) |
+| **Secondi⏰💧 (🌱irrigazione a tempo)** / *Seconds⏰💧 (🌱timed irrigation)* | Seconds | `irrigation_by_seconds` |
 
-**Valve auto-detection:** a device qualifies when it has both a `switch.*` entity and a `sensor.*` entity with `device_class` `volume` or `water` (energy-metering sockets are ignored), **and** no integration with a dedicated driver for it already owns entities on the device (`FOREIGN_VALVE_PLATFORMS`). The SONOFF SWV-ZF2 is the case that rule exists for: it matches the heuristic, but it is a *dual-line* valve, and this integration is built on one switch per valve — it would have driven line A whatever you picked. Its own integration, [zha-sonoff-quirks](https://github.com/SimoneAvogadro/zha-sonoff-quirks), handles both lines with per-line history, litres and mode. Each detected valve also gets an **"Irrigazione in corso" / "Irrigating"** `binary_sensor`, `on` while a server-side run is active — this association is what surfaces the device actions and gives live feedback.
+This works because the services declare a `target:` filtered to this integration's entities, which is what that tab matches against the device's entities. (HA *device actions* would not show up: since HA 2026.8 a device belongs to its owning integration only — ZHA here — and HA asks nobody else for device actions.)
+
+**Valve auto-detection:** a device qualifies when it has both a `switch.*` entity and a `sensor.*` entity with `device_class` `volume` or `water` (energy-metering sockets are ignored), **and** no integration with a dedicated driver for it already owns entities on the device (`FOREIGN_VALVE_PLATFORMS`). The SONOFF SWV-ZF2 is the case that rule exists for: it matches the heuristic, but it is a *dual-line* valve, and this integration is built on one switch per valve — it would have driven line A whatever you picked. Its own integration, [zha-sonoff-quirks](https://github.com/SimoneAvogadro/zha-sonoff-quirks), handles both lines with per-line history, litres and mode. Each detected valve also gets an **"Irrigazione in corso" / "Irrigating"** `binary_sensor`, `on` while a server-side run is active — this association is what makes the services show up for the device in the "by target" tab and gives live feedback.
 
 ---
 

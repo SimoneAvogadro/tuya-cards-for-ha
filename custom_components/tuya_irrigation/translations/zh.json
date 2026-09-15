@@ -10,16 +10,6 @@
       "already_configured": "Tuya Irrigation 已配置。"
     }
   },
-  "device_automation": {
-    "action_type": {
-      "irrigate_liters": "升量🪣💧（🌱按水量灌溉）",
-      "irrigate_seconds": "时长⏰💧（🌱按时间灌溉）"
-    },
-    "extra_fields": {
-      "liters": "升量",
-      "duration": "时长"
-    }
-  },
   "entity": {
     "binary_sensor": {
       "irrigating": {
@@ -40,10 +30,6 @@
       "name": "秒数⏰💧（🌱定时灌溉）",
       "description": "打开阀门 N 秒后关闭。计时器在 Home Assistant 中运行：关闭浏览器也有效，阀门自身计时器不可靠时同样有效。",
       "fields": {
-        "device_id": {
-          "name": "灌溉阀",
-          "description": "要控制的阀门。"
-        },
         "switch_entity": {
           "name": "阀门",
           "description": "控制灌溉阀门的开关实体。"
@@ -58,10 +44,6 @@
       "name": "升量🪣💧（🌱定量灌溉）",
       "description": "打开阀门，达到请求的水量后关闭。若没有水流，几分钟后也会自动关闭。",
       "fields": {
-        "device_id": {
-          "name": "灌溉阀",
-          "description": "要控制的阀门。"
-        },
         "switch_entity": {
           "name": "阀门",
           "description": "控制灌溉阀门的开关实体。"

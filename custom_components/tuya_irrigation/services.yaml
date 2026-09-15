@@ -4,21 +4,29 @@
 # out of here is what makes them translatable — inline names in this file are
 # shown verbatim in every language.
 #
-# The valve is picked as a DEVICE (filtered to this integration, so the list is
-# exactly the detected valves). `switch_entity` is still accepted by the service
-# schema for the card, the device actions and existing automations, but is not
-# offered in the UI so the form stays a single line.
+# The valve is picked as a standard HA service TARGET. Declaring `target:` (not
+# a plain `device_id` field) is what makes these services show up in the
+# automation editor's "by target" tab when a valve device is selected: the
+# frontend asks `get_services_for_target`, which lists every service whose
+# target entity filter matches one of the device's entities — here this
+# integration's own entities on the valve (the "Irrigating" binary_sensor), so
+# exactly the detected valves match. Device actions cannot do this since HA
+# 2026.8: they are only asked of the device's owning integration (ZHA), never
+# of an integration that merely attaches entities to the device.
+#
+# The same filters drive the target picker: `device` lists the devices carrying
+# this integration's entities, `entity` offers the "Irrigating" binary_sensor
+# of each valve. A target must resolve to ONE valve (the service rejects more).
+# `switch_entity` is still accepted by the service schema for the card and
+# existing automations, but is not offered in the UI.
 irrigation_by_seconds:
+  target:
+    device:
+      - integration: tuya_irrigation
+    entity:
+      - integration: tuya_irrigation
+        domain: binary_sensor
   fields:
-    device_id:
-      required: true
-      selector:
-        device:
-          filter:
-            # Only devices carrying this integration's entities, i.e. the
-            # detected valves (each gets an "Irrigating" binary_sensor + the
-            # history/water-total sensors merged into its device).
-            - integration: tuya_irrigation
     seconds:
       required: true
       example: 60
@@ -30,16 +38,13 @@ irrigation_by_seconds:
           mode: box
 
 irrigation_by_liters:
+  target:
+    device:
+      - integration: tuya_irrigation
+    entity:
+      - integration: tuya_irrigation
+        domain: binary_sensor
   fields:
-    device_id:
-      required: true
-      selector:
-        device:
-          filter:
-            # Only devices carrying this integration's entities, i.e. the
-            # detected valves (each gets an "Irrigating" binary_sensor + the
-            # history/water-total sensors merged into its device).
-            - integration: tuya_irrigation
     liters:
       required: true
       example: 10

@@ -17,9 +17,6 @@ SERVICE_IRRIGATION_BY_LITERS = "irrigation_by_liters"
 
 # Service attribute keys.
 ATTR_SWITCH_ENTITY = "switch_entity"
-# Alternative to switch_entity: the valve *device* (what the UI selector offers —
-# a device picker filtered to devices carrying this integration's entities).
-ATTR_DEVICE_ID = "device_id"
 ATTR_SECONDS = "seconds"
 ATTR_LITERS = "liters"
 ATTR_TIMEOUT_SECONDS = "timeout_seconds"
@@ -77,17 +74,6 @@ VALVE_VOLUME_DEVICE_CLASSES = frozenset({"volume", "water"})
 #: it is a dual-line valve. This module assumes one switch per valve, so it
 #: would have driven line A whatever the user picked.
 FOREIGN_VALVE_PLATFORMS = frozenset({"zha_sonoff_quirks"})
-
-# Maximum seconds the "by seconds" service accepts (mirrors SECONDS_SCHEMA).
-MAX_IRRIGATION_SECONDS = 43200
-
-# device_action type identifiers.
-ACTION_IRRIGATE_LITERS = "irrigate_liters"
-ACTION_IRRIGATE_SECONDS = "irrigate_seconds"
-
-# device_action extra-field config keys.
-CONF_LITERS = "liters"
-CONF_DURATION = "duration"
 
 
 def running_signal(switch_entity: str) -> str:

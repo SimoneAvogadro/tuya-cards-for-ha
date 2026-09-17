@@ -28,11 +28,13 @@ tuya-cards-for-ha/
 ├── docs/
 │   └── PLAN-integration-v2.md    ← architectural plan for v2.0
 ├── src/                          ← card sources, one file per card (+ shared panels)
+│   ├── cover-compact-card.js     ← one-row cover card (mirrored position bar)
 │   ├── irrigation-control-card.js
 │   ├── sensor-trend-panel.js     ← NOT a card: <sensor-trend-panel> element (day/week/month trend chart)
 │   ├── signal-quality.js         ← NOT a card: shared Zigbee signal icon helpers (sq* functions) for both card headers
 │   └── soil-moisture-card.js
 ├── tests/
+│   ├── cover-compact-card.test.js ← pure-logic tests (bar arithmetic, label, suggestion)
 │   ├── sensor-trend-panel.test.js ← pure-logic tests (node:vm, no framework)
 │   └── signal-quality.test.js    ← thresholds + entity resolution of the signal icon
 ├── tuya-cards.js                 ← built bundle at repo root (DO NOT edit)
@@ -119,6 +121,8 @@ Each finalized run also fires the **un-namespaced `irrigation_completed`** event
 - **Switch is the single source of truth** for the running state (badge + play/stop button). The progress bar is **device-derived**, not a client `setInterval` counter: Tempo uses `end_time − start_time`, Liters uses `summation_delivered / target` (the integration writes mode/target so these are populated — see Integration services). A 1 s render tick (`_startTick`) only re-renders; values are recomputed from device state each time, so the bar survives a browser refresh, reflects automation-started runs, and never drifts. The `_startPressedAt` stale-`start_time` guard covers the ~1.5 s open delay; the "Avvio…" overlay (`_beginStarting`, 10 s watchdog) covers it visually.
 - **Trend panel (soil-moisture-card)**: tapping a reading column opens `<sensor-trend-panel>` (`src/sensor-trend-panel.js`) under the readings, styled like the energy-statistics panel of `power-switch-card` in `zha-tuya-quirks`. Day = raw `history/history_during_period` line (hourly-mean statistics fallback beyond recorder retention); Week/Month = daily min/max lines + band from `recorder/statistics_during_period` (`period: "day"`, `types: [min,max,mean]`). The panel is a plain element with `setup(hass, entityId, {color, unit, decimals, clamp, keepPeriod})`, a `hass` setter and `refreshIfCurrent()` (called from the card's 60 s tick, self-rate-limited to 15 min). Its SVG is drawn in pixel coordinates (ResizeObserver) so strokes never distort; colours are plain hex because `var()` is not parsed in SVG presentation attributes. **Every top-level identifier in a shared panel is prefixed** (`stp`/`STP_`) because `build.sh` concatenates all of `src/*.js` into one module scope. Spec: `docs/superpowers/specs/2026-09-08-sensor-trend-panel-design.md`.
 - **Signal quality icon** (both cards): `src/signal-quality.js` resolves the optional `lqi` / `linkquality` / `rssi` suffixes (ZHA diagnostic entities, disabled by default; Z2M `linkquality`) and renders WiFi-style arcs left of the battery. LQI (0–255) is preferred, RSSI (dBm) is the fallback; 4 levels, level 1 red, level 0 (present but unavailable) all-dim, hidden with the battery when offline, no icon when none of the entities exists. Each card lists the three suffixes in its own `SUFFIXES` table and calls `sqRead(hass, entities, anchor)` / `sqHtml` at `_createDOM` and `sqApply` in `_update`; `anchor` is the card's primary entity (`switch` / `soil_moisture`). When a suffix-derived id has no state, `sqResolve` looks the missing key up on the anchor's device through `hass.entities` (the frontend's entity-registry display map: entity_id → `device_id`), accepting only `sensor.*_lqi` / `_linkquality` / `_rssi` that also have a state, so a disabled diagnostic still hides the icon. This is what makes the icon work on a SONOFF SWV driven by zha-sonoff-quirks (area-named irrigation entities, device-named ZHA diagnostics) and on renamed entities. The helper holds only **function declarations** (no top-level `const`): it is concatenated *after* `irrigation-control-card.js`, so a `const` would still be in its temporal dead zone when that card builds its suffix table.
+- **Cover card** (`src/cover-compact-card.js`): one row — icon + name + `Aperto · 21%` stacked on the left, position bar at full card height on the right. The bar is **mirrored**: the fill is anchored to the *right* edge with length `100 − position` (the closed share), so the handle sits at `position`% from the left and dragging right opens; `fill_from: "left"` restores HA's orientation. `cvPosFromX` / `cvBoundaryPct` are exact inverses — change one and the round-trip test in `tests/` catches it. Control is **drag-only** (`CV_DRAG_MIN_PX`, 2 px): a bare tap must never move a shutter, and `cover.set_cover_position` fires once on release. `cvDisplayPos` keeps the commanded value on screen until the device agrees (`CV_PENDING_MS`) so the bar can't snap back while the motor spins up. Icon/name tap → `hass-more-info`.
+- **`getEntitySuggestion`** (cover card): since frontend [#52228](https://github.com/home-assistant/frontend/pull/52228) (HA **2026.6+**) a `window.customCards` entry may carry `getEntitySuggestion(hass, entityId) → {label, config} | [] | null`; `generateCardSuggestions` collects those and `hui-suggestion-picker` renders them, with a live preview, in a section of their own under the core suggestions in *Add card → By entity*. This is the **only** way a custom card reaches that tab — `computeCards` / `CARD_SUGGESTION_PROVIDERS` are hardcoded per domain. Return `null` fast for anything that doesn't fit; older HA just ignores the property.
 - **History list**: the expanded "last irrigation" view nests a second `+` that lists past runs from `sensor.<prefix>_irrigation_history`'s `runs` attribute; level-1 stays live device-DP-driven for in-run monitoring. `history` is a **non-required** suffix, so the card degrades gracefully (second `+` hidden) when the integration hasn't created the sensor. See [Irrigation history (run log)](#irrigation-history-run-log).
 
 ## Adding a new card
@@ -127,6 +131,7 @@ Each finalized run also fires the **un-namespaced `irrigation_completed`** event
 2. The file must end with `customElements.define(...)` and a `window.customCards.push(...)` (inside a self-invoking function that picks a localized display name from `localStorage.selectedLanguage`).
 3. Run `bash build.sh`.
 4. Update the "What's included" table in `README.md`.
+5. If the card is for a single entity domain, add `getEntitySuggestion` to the `customCards` entry so it shows up in the picker's "By entity" tab (see Card rules).
 
 ## ZHA layer (zha-tuya-quirks)
 
@@ -152,11 +157,12 @@ Design note: `docs/superpowers/specs/2026-09-14-zha-layer-split-design.md`.
 
 ## Testing
 
-Pure-logic tests for the trend panel (period arithmetic, bucket filling, history parsing, axis ticks) and for the signal icon (thresholds, entity resolution) run without any dependency:
+Pure-logic tests for the trend panel (period arithmetic, bucket filling, history parsing, axis ticks), the signal icon (thresholds, entity resolution) and the cover card (mirrored bar arithmetic, drag threshold, state label, picker suggestion) run without any dependency:
 
 ```bash
 TZ=Europe/Rome node tests/sensor-trend-panel.test.js
 node tests/signal-quality.test.js
+node tests/cover-compact-card.test.js
 ```
 
 For a visual check without HA, render the bundle in the Playwright Chromium binary (`~/.cache/ms-playwright/chromium_headless_shell-*/…/chrome-headless-shell --headless --screenshot=… --virtual-time-budget=3000 <url>`) from a small harness page that defines a mock `hass` (`states` + `callWS` returning synthetic history/statistics) and serves it over `python3 -m http.server` (module scripts can't load from `file://`).
@@ -171,6 +177,7 @@ Everything else is verified manually on a real HA instance:
 - Auto-discovery finds compatible devices in both visual editors.
 - Browser-closed test: start a 60s irrigation → close tab → wait 90s → reopen → valve is off.
 - Trend panel: tap the temperature column of a soil-moisture-card → panel opens on Day with today's line; Week/Month show min/max bands; `▶` disabled on the current period; tapping the column again closes it; tapping another column switches metric keeping the view.
+- Cover card: *Add card → By entity → "tapparella"* lists "Tapparella compatta" with a live preview next to the Mosaico variants; dragging the bar shows the live % and only moves the shutter on release; a tap does nothing; the icon opens more-info.
 - Irrigation history: after a run, `sensor.<prefix>_irrigation_history`'s `runs` attribute grows and `sensor.<prefix>_irrigation_water_total` increases; the `irrigation_completed` event fires; both survive an HA restart; the card's nested "+" lists past runs.
 
 ## Additional context

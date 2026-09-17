@@ -25,6 +25,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 | `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services (HA service **target**: listed in the automation editor's "by target" tab for every valve device) + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves (radio side in zha-tuya-quirks) | v2.14.0 |
 | `irrigation-control-card` | Lovelace card driving the services above, with battery + Zigbee signal icon | v2.10.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature (+ optional air humidity) sensors, with a tap-to-open trend panel (day / week / month) and a Zigbee signal icon | v1.7.0 |
+| `cover-compact-card` | One-row card for covers (tapparelle / shutters): name and state on the left, full-height position bar on the right, filled from the right edge; drag-only control and a live preview in the "by entity" card picker | v1.0.0 |
 
 ## Installation (HACS)
 
@@ -250,9 +251,39 @@ acc_max: 80
 
 ---
 
+## Cover Compact Card
+
+One-row card for covers — tapparelle, shutters, curtains. It does the same job as HA's tile card with the *cover position* feature, in half the height: the tile spends a nearly empty row on the name and state and a second one on the bar, here the name and the `Aperto · 21%` line stay stacked on the left and the bar takes the whole right side at full card height.
+
+<p>
+  <img src="docs/images/cover-compact-card.png" alt="Cover compact card: name and state on the left, position bar filled from the right" width="420">
+</p>
+
+- **Mirrored bar.** The fill is anchored to the **right** edge and is as long as the closed share (`100 - position`), so the handle travels right to open. `fill_from: left` restores Home Assistant's orientation.
+- **Drag only, no tap.** The pointer has to travel at least 2 px before the gesture counts, so a mis-tap can never move a shutter. The percentage and the fill follow the finger live and `cover.set_cover_position` goes out once, on release; the commanded value stays on screen until the device reports it back (8 s ceiling), so the bar doesn't snap back while the motor starts.
+- **Shown in the "by entity" card picker.** The card registers `getEntitySuggestion`, so picking a positionable cover in *Add card → By entity* lists it, with a live preview, right under the tile variants. Needs HA 2026.6+ (frontend [#52228](https://github.com/home-assistant/frontend/pull/52228)); on older versions the hook is ignored and the card is still reachable from the *By card* tab.
+- **Visual editor** listing only covers that declare `SET_POSITION`, plus the name and the bar direction. Tap the icon or the name for the more-info dialog (where open / close / stop live).
+- **Offline** (`unavailable`) replaces the bar with a red *Offline* pill and reddens the icon; a cover that reports no `current_position` gets an empty bar and no handle.
+
+```yaml
+type: custom:cover-compact-card
+entity: cover.bagno_tapparella_bagno
+name: Tapparella bagno     # optional, defaults to the entity name
+fill_from: right           # optional: right (default) | left
+```
+
+```
+position = 21%  (open 21%)
+
+  tile card  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░     fill anchored LEFT
+  this card  ░░░░░░░▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓     fill anchored RIGHT
+             ^
+             handle at 21% — drag right to open
+```
+
 ## Signal quality icon
 
-Both cards show a small WiFi-style icon (three arcs + dot) to the left of the battery when the device exposes a signal-quality entity. Nothing to configure — the icon appears as soon as the entity exists and disappears (with the battery) when the device is offline.
+The irrigation and soil-moisture cards show a small WiFi-style icon (three arcs + dot) to the left of the battery when the device exposes a signal-quality entity. Nothing to configure — the icon appears as soon as the entity exists and disappears (with the battery) when the device is offline.
 
 - **ZHA**: `sensor.<prefix>_lqi` and `sensor.<prefix>_rssi` are *diagnostic* entities, **disabled by default**. Enable at least one from the device page (Settings → Devices & Services → the device → "+N entities not shown" → enable). LQI is preferred; RSSI is used only when it is the sole one enabled.
 - **Zigbee2MQTT**: `sensor.<prefix>_linkquality` is created automatically.

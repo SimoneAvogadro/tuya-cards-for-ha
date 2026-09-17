@@ -55,7 +55,7 @@ No dependencies. The script concatenates a header + all `src/*.js` files into `t
 
 ## Versioning
 
-The integration version lives in **two** places that must stay in sync: `manifest.json` (`version`) and `const.py` (`VERSION`, used for the `?v=` query string of the Lovelace resource and the startup log line). The README "What's included" table tracks the integration and each card's version (card versions are also in each card's header comment and `console.info` banner).
+The integration version lives in **two** places that must stay in sync: `manifest.json` (`version`) and `const.py` (`VERSION`, used for the `?v=` query string of the Lovelace resource and the startup log line). A **config-entry reload does not re-import the Python modules**, so after a version bump the resource keeps the old `VERSION` in its URL until a real HA restart — harmless, since the `-<hash8>` half already busts the cache on every rebuilt bundle. The README "What's included" table tracks the integration and each card's version (card versions are also in each card's header comment and `console.info` banner).
 
 ## Integration lifecycle
 

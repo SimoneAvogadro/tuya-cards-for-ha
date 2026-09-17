@@ -22,7 +22,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services (HA service **target**: listed in the automation editor's "by target" tab for every valve device) + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves (radio side in zha-tuya-quirks) | v2.14.0 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services (HA service **target**: listed in the automation editor's "by target" tab for every valve device) + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves (radio side in zha-tuya-quirks) | v2.15.0 |
 | `irrigation-control-card` | Lovelace card driving the services above, with battery + Zigbee signal icon | v2.10.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature (+ optional air humidity) sensors, with a tap-to-open trend panel (day / week / month) and a Zigbee signal icon | v1.7.0 |
 | `cover-compact-card` | One-row card for covers (tapparelle / shutters): name and state on the left, full-height position bar on the right, filled from the right edge; drag-only control and a live preview in the "by entity" card picker | v1.1.0 |

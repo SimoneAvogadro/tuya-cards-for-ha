@@ -38,6 +38,7 @@ const {
   cvClampPos, cvPosOf, cvSupportsPosition, cvPosFromX, cvFillPct,
   cvIsDrag, cvIsMoving, cvStateLabel, cvSuggestFor, cvPickStubEntity,
   cvBoundaryPct, cvDisplayPos, cvFillFrom,
+  cvClosedTolerance, cvIsClosed, cvEffectivePos, cvVarChain, cvStateColorVar,
 } = ctx;
 
 const rect = { left: 100, width: 200 };           // bar spans x = 100 … 300
@@ -167,28 +168,95 @@ test("cvIsMoving covers both travel states", () => {
 
 // ── label ──
 test("cvStateLabel: open shows state and percentage", () => {
-  assert.equal(cvStateLabel(hass({}), cover("open", 21), null), "Aperto · 21%");
-  assert.equal(cvStateLabel(hass({}, "en"), cover("open", 21), null), "Open · 21%");
+  assert.equal(cvStateLabel(hass({}), cover("open", 21), null, 0), "Aperto · 21%");
+  assert.equal(cvStateLabel(hass({}, "en"), cover("open", 21), null, 0), "Open · 21%");
 });
 test("cvStateLabel: closed drops the redundant 0%", () => {
-  assert.equal(cvStateLabel(hass({}), cover("closed", 0), null), "Chiuso");
+  assert.equal(cvStateLabel(hass({}), cover("closed", 0), null, 0), "Chiuso");
 });
 test("cvStateLabel: travel states keep the percentage", () => {
-  assert.equal(cvStateLabel(hass({}), cover("opening", 40), null), "In apertura · 40%");
-  assert.equal(cvStateLabel(hass({}), cover("closing", 40), null), "In chiusura · 40%");
+  assert.equal(cvStateLabel(hass({}), cover("opening", 40), null, 0), "In apertura · 40%");
+  assert.equal(cvStateLabel(hass({}), cover("closing", 40), null, 0), "In chiusura · 40%");
 });
 test("cvStateLabel: the drag override wins over the device value", () => {
-  assert.equal(cvStateLabel(hass({}), cover("open", 21), 45), "Aperto · 45%");
-  assert.equal(cvStateLabel(hass({}), cover("closed", 0), 45), "Aperto · 45%");
-  assert.equal(cvStateLabel(hass({}), cover("open", 80), 0), "Chiuso");
+  assert.equal(cvStateLabel(hass({}), cover("open", 21), 45, 0), "Aperto · 45%");
+  assert.equal(cvStateLabel(hass({}), cover("closed", 0), 45, 0), "Aperto · 45%");
+  assert.equal(cvStateLabel(hass({}), cover("open", 80), 0, 0), "Chiuso");
 });
 test("cvStateLabel: no position → state alone", () => {
-  assert.equal(cvStateLabel(hass({}), cover("open", null), null), "Aperto");
+  assert.equal(cvStateLabel(hass({}), cover("open", null), null, 0), "Aperto");
 });
 test("cvStateLabel: offline", () => {
-  assert.equal(cvStateLabel(hass({}), st("unavailable"), null), "Offline");
-  assert.equal(cvStateLabel(hass({}), st("unknown"), null), "Sconosciuto");
-  assert.equal(cvStateLabel(hass({}), undefined, null), "Offline");
+  assert.equal(cvStateLabel(hass({}), st("unavailable"), null, 0), "Offline");
+  assert.equal(cvStateLabel(hass({}), st("unknown"), null, 0), "Sconosciuto");
+  assert.equal(cvStateLabel(hass({}), undefined, null, 0), "Offline");
+});
+
+// ── closed tolerance: the TS130F parks at 1% and HA still calls it open ──
+test("cvClosedTolerance defaults to 1 and clamps", () => {
+  assert.equal(cvClosedTolerance(undefined), 1);
+  assert.equal(cvClosedTolerance({}), 1);
+  assert.equal(cvClosedTolerance({ closed_tolerance: 0 }), 0);
+  assert.equal(cvClosedTolerance({ closed_tolerance: 4 }), 4);
+  assert.equal(cvClosedTolerance({ closed_tolerance: "3" }), 3);
+  assert.equal(cvClosedTolerance({ closed_tolerance: 99 }), 10);
+  assert.equal(cvClosedTolerance({ closed_tolerance: -5 }), 0);
+  assert.equal(cvClosedTolerance({ closed_tolerance: "" }), 1);
+});
+test("cvIsClosed treats within-tolerance as shut", () => {
+  assert.equal(cvIsClosed(0, 1), true);
+  assert.equal(cvIsClosed(1, 1), true);
+  assert.equal(cvIsClosed(2, 1), false);
+  assert.equal(cvIsClosed(1, 0), false);
+  assert.equal(cvIsClosed(4, 4), true);
+  assert.equal(cvIsClosed(null, 1), false);
+});
+test("cvEffectivePos snaps the sliver away", () => {
+  assert.equal(cvEffectivePos(1, 1), 0);
+  assert.equal(cvEffectivePos(2, 1), 2);
+  assert.equal(cvEffectivePos(21, 1), 21);
+  assert.equal(cvEffectivePos(null, 1), null);
+});
+test("a cover parked at 1% reads Chiuso, and the bar is full", () => {
+  assert.equal(cvStateLabel(hass({}), cover("open", 1), null, 1), "Chiuso");
+  assert.equal(cvFillPct(cvEffectivePos(1, 1)), 100);
+  // with the tolerance off it stays honest to HA
+  assert.equal(cvStateLabel(hass({}), cover("open", 1), null, 0), "Aperto · 1%");
+});
+test("the tolerance does not swallow a real opening", () => {
+  assert.equal(cvStateLabel(hass({}), cover("open", 2), null, 1), "Aperto · 2%");
+});
+
+// ── colour: the exact variable chain HA resolves for a cover ──
+test("cvVarChain nests fallbacks left to right", () => {
+  assert.equal(cvVarChain(["--a"], "#000"), "var(--a, #000)");
+  assert.equal(cvVarChain(["--a", "--b"], "#000"), "var(--a, var(--b, #000))");
+});
+test("an open cover resolves to --state-cover-active-color (the purple)", () => {
+  const c = cvStateColorVar(cover("open", 21), false);
+  assert.equal(c,
+    "var(--state-cover-open-color, var(--state-cover-active-color, var(--state-active-color, #a476e0)))");
+  // the v1.0.0 bug: skipping the cover-active step lands on the amber
+  assert.ok(c.includes("--state-cover-active-color"));
+});
+test("a device_class gets its own first step, like HA", () => {
+  const dc = { state: "open", attributes: { device_class: "curtain", current_position: 21, supported_features: 15 } };
+  assert.equal(cvStateColorVar(dc, false),
+    "var(--state-cover-curtain-open-color, var(--state-cover-open-color, var(--state-cover-active-color, var(--state-active-color, #a476e0))))");
+});
+test("closed resolves to the inactive chain", () => {
+  assert.equal(cvStateColorVar(cover("closed", 0), true),
+    "var(--state-cover-closed-color, var(--state-cover-inactive-color, var(--state-inactive-color, #9e9e9e)))");
+});
+test("a cover parked at 1% goes grey with the tolerance on", () => {
+  assert.equal(cvStateColorVar(cover("open", 1), true),
+    "var(--state-cover-closed-color, var(--state-cover-inactive-color, var(--state-inactive-color, #9e9e9e)))");
+});
+test("travel states stay active; unavailable and unknown do not", () => {
+  assert.ok(cvStateColorVar(cover("closing", 60), false).includes("--state-cover-closing-color"));
+  assert.ok(cvStateColorVar(cover("closing", 60), false).includes("--state-cover-active-color"));
+  assert.equal(cvStateColorVar(st("unavailable"), undefined), "var(--state-unavailable-color, #8b8da5)");
+  assert.ok(cvStateColorVar(st("unknown"), false).includes("--state-inactive-color"));
 });
 
 // ── entity-picker suggestion (HA >= 2026.6 getEntitySuggestion) ──

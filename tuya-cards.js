@@ -10,6 +10,17 @@
  * Cover Compact Card for Home Assistant
  * One-row Lovelace card for covers (tapparelle / shutters / curtains)
  *
+ * v1.1.0 — Colour: resolve the entity state colour through the same variable
+ *          chain HA uses (--state-cover-<dc>-<state>-color → --state-cover-
+ *          <state>-color → --state-cover-active|inactive-color → --state-
+ *          active|inactive-color). v1.0.0 asked for --state-cover-open-color,
+ *          which does not exist, and fell through to the amber --state-active-
+ *          color. Icon and bar now go purple while open and grey once closed,
+ *          like the tile card.
+ *          `closed_tolerance` (default 1): many Tuya motors run all the way
+ *          down and still report 1%, leaving HA "open · 1%". At or below the
+ *          tolerance the card reads "Chiuso", draws the bar full, and a drag
+ *          down there commands position 0.
  * v1.0.0 — Compact alternative to the tile card with the cover-position
  *          feature, which spends two rows: a nearly empty one for the name
  *          and state, and a second one for the bar. Here the name and the
@@ -43,6 +54,8 @@ const CV_I18N = {
     editorDirection: "Verso della barra",
     editorDirRight: "Riempimento da destra (predefinito)",
     editorDirLeft: "Riempimento da sinistra (come Home Assistant)",
+    editorTolerance: "Tolleranza di chiusura (%)",
+    editorToleranceHint: "Sotto o pari a questa posizione la tapparella è mostrata come chiusa: molti motori Tuya riportano 1% quando sono giù del tutto",
     configError: "Seleziona una tapparella nella configurazione",
     defaultName: "Copertura",
     suggestLabel: "Tapparella compatta",
@@ -58,6 +71,8 @@ const CV_I18N = {
     editorDirection: "Bar direction",
     editorDirRight: "Fill from the right (default)",
     editorDirLeft: "Fill from the left (like Home Assistant)",
+    editorTolerance: "Closed tolerance (%)",
+    editorToleranceHint: "At or below this position the cover reads as closed: many Tuya motors report 1% when fully down",
     configError: "Select a cover in the configuration",
     defaultName: "Cover",
     suggestLabel: "Compact cover",
@@ -73,6 +88,8 @@ const CV_I18N = {
     editorDirection: "进度条方向",
     editorDirRight: "从右侧填充（默认）",
     editorDirLeft: "从左侧填充（与 Home Assistant 一致）",
+    editorTolerance: "关闭容差（%）",
+    editorToleranceHint: "位置小于或等于该值时显示为关闭：许多涂鸦电机完全降下时仍报告 1%",
     configError: "请在配置中选择一个窗帘",
     defaultName: "窗帘",
     suggestLabel: "紧凑窗帘卡片",
@@ -93,6 +110,11 @@ const CV_DRAG_MIN_PX = 2;
 // it back (or this long, whichever comes first) — otherwise the bar snaps back
 // to the old value for the seconds the motor takes to start moving.
 const CV_PENDING_MS = 8000;
+// Many Tuya roller-shutter motors (e.g. TS130F) run all the way down but send
+// 1 as their final position, so HA keeps the cover "open" at 1%. Positions at
+// or below the tolerance read — and are commanded — as fully closed.
+const CV_DEFAULT_CLOSED_TOLERANCE = 1;
+const CV_MAX_CLOSED_TOLERANCE = 10;
 
 // ── Pure logic (unit-tested in tests/cover-compact-card.test.js) ──
 
@@ -131,6 +153,26 @@ function cvBoundaryPct(position, fillFrom) {
   return fillFrom === "left" ? 100 - p : p;
 }
 
+function cvClosedTolerance(config) {
+  const v = cvClampPos(config?.closed_tolerance);
+  if (v === null) return CV_DEFAULT_CLOSED_TOLERANCE;
+  return Math.min(v, CV_MAX_CLOSED_TOLERANCE);
+}
+
+// "Down as far as it goes" — whatever the motor's last report says.
+function cvIsClosed(position, tolerance) {
+  const p = cvClampPos(position);
+  return p !== null && p <= (tolerance || 0);
+}
+
+// Snap a within-tolerance position to 0, for drawing and for the command, so
+// the bar has no 1% sliver left and a drag to the bottom really closes.
+function cvEffectivePos(position, tolerance) {
+  const p = cvClampPos(position);
+  if (p === null) return null;
+  return cvIsClosed(p, tolerance) ? 0 : p;
+}
+
 function cvIsDrag(dx) { return Math.abs(dx) >= CV_DRAG_MIN_PX; }
 
 function cvIsMoving(state) { return state === "opening" || state === "closing"; }
@@ -143,20 +185,50 @@ function cvDisplayPos(devicePos, dragPos, pending, now) {
   return devicePos === undefined ? null : devicePos;
 }
 
-function cvStateLabel(hass, stateObj, override) {
+function cvStateLabel(hass, stateObj, override, tolerance) {
   const t = (k) => _cv(hass, k);
   const state = stateObj?.state;
   if (!state || state === "unavailable") return t("offline");
   if (state === "unknown") return t("unknown");
   // The dragged / commanded value takes over both the percentage and the word:
   // dragging to 0 reads "Closed" even while the device still reports open.
-  const pos = override !== null && override !== undefined ? override : cvPosOf(stateObj);
+  const raw = override !== null && override !== undefined ? override : cvPosOf(stateObj);
+  const pos = cvEffectivePos(raw, tolerance);
   let word;
   if (cvIsMoving(state)) word = t(state);
   else if (pos !== null) word = pos === 0 ? t("closed") : t("open");
   else word = state === "closed" ? t("closed") : t("open");
   if (pos === null || (pos === 0 && !cvIsMoving(state))) return word;
   return `${word} · ${pos}%`;
+}
+
+// ── Colour: exactly the chain Home Assistant resolves for a cover ──
+// domainColorProperties() in the frontend builds
+//   --state-cover-<device_class>-<state>-color, --state-cover-<state>-color,
+//   --state-cover-<active|inactive>-color, --state-<active|inactive>-color
+// and nests them as fallbacks. The purple lives on --state-cover-active-color;
+// --state-cover-open-color does not exist, so skipping the active one lands on
+// --state-active-color, which is amber.
+function cvVarChain(names, fallback) {
+  return names.reduceRight((acc, n) => `var(${n}, ${acc})`, fallback);
+}
+
+function cvStateColorVar(stateObj, closed) {
+  const state = stateObj?.state;
+  if (!state || state === "unavailable") return "var(--state-unavailable-color, #8b8da5)";
+  // stateActive() in HA: a cover is active unless it is closed (or unknown).
+  const shut = closed === undefined ? state === "closed" : !!closed;
+  const active = !shut && state !== "unknown";
+  const stateKey = shut ? "closed" : state;
+  const dc = stateObj?.attributes?.device_class;
+  const names = [];
+  if (dc) names.push(`--state-cover-${dc}-${stateKey}-color`);
+  names.push(
+    `--state-cover-${stateKey}-color`,
+    `--state-cover-${active ? "active" : "inactive"}-color`,
+    `--state-${active ? "active" : "inactive"}-color`
+  );
+  return cvVarChain(names, active ? "#a476e0" : "#9e9e9e");
 }
 
 // HA >= 2026.6 calls this for the entity the user picked in the card picker's
@@ -220,7 +292,7 @@ class CoverCompactCardEditor extends HTMLElement {
 .editor{padding:16px;font-family:var(--paper-font-body1_-_font-family,sans-serif)}
 .row{margin-bottom:16px}
 label{display:block;font-size:12px;font-weight:500;color:var(--secondary-text-color);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
-select,input[type="text"]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--divider-color,rgba(255,255,255,.06));background:var(--card-background-color,#232640);color:var(--primary-text-color);font-size:14px;font-family:monospace;outline:none;box-sizing:border-box}
+select,input[type="text"],input[type="number"]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--divider-color,rgba(255,255,255,.06));background:var(--card-background-color,#232640);color:var(--primary-text-color);font-size:14px;font-family:monospace;outline:none;box-sizing:border-box}
 select:focus,input:focus{border-color:#4a90d9}
 .hint{font-size:11px;color:var(--disabled-text-color,#5c5e76);margin-top:4px}
 .empty{font-size:13px;color:var(--disabled-text-color);padding:12px;text-align:center;background:var(--divider-color,rgba(255,255,255,.06));border-radius:8px}
@@ -247,6 +319,11 @@ select:focus,input:focus{border-color:#4a90d9}
       <option value="left">${t("editorDirLeft")}</option>
     </select>
   </div>
+  <div class="row">
+    <label>${t("editorTolerance")}</label>
+    <input type="number" id="tol" min="0" max="${CV_MAX_CLOSED_TOLERANCE}">
+    <div class="hint">${t("editorToleranceHint")}</div>
+  </div>
 </div>`;
     const r = this.shadowRoot;
     this._el = {
@@ -255,6 +332,7 @@ select:focus,input:focus{border-color:#4a90d9}
       enEmpty: r.getElementById("en-empty"),
       nm: r.getElementById("nm"),
       dir: r.getElementById("dir"),
+      tol: r.getElementById("tol"),
     };
     this._el.en.addEventListener("change", (e) => {
       this._config = { ...this._config, entity: e.target.value };
@@ -272,6 +350,12 @@ select:focus,input:focus{border-color:#4a90d9}
     this._el.dir.addEventListener("change", (e) => {
       if (e.target.value === "left") this._config = { ...this._config, fill_from: "left" };
       else { const { fill_from, ...rest } = this._config; this._config = rest; }
+      this._fire();
+    });
+    this._el.tol.addEventListener("change", (e) => {
+      const v = cvClosedTolerance({ closed_tolerance: e.target.value });
+      if (v === CV_DEFAULT_CLOSED_TOLERANCE) { const { closed_tolerance, ...rest } = this._config; this._config = rest; }
+      else this._config = { ...this._config, closed_tolerance: v };
       this._fire();
     });
     this._domBuilt = true;
@@ -306,6 +390,8 @@ select:focus,input:focus{border-color:#4a90d9}
     }
     if (ae !== this._el.nm && this._el.nm.value !== nm) this._el.nm.value = nm;
     if (ae !== this._el.dir && this._el.dir.value !== dir) this._el.dir.value = dir;
+    const tol = String(cvClosedTolerance(this._config));
+    if (ae !== this._el.tol && this._el.tol.value !== tol) this._el.tol.value = tol;
   }
 
   _fire() { this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true })); }
@@ -454,8 +540,9 @@ ha-card{overflow:hidden}
     const pos = this._dragPos;
     this._endGesture(ev);
     if (!dragged || pos === null) { this._update(); return; }   // a bare tap moves nothing
-    this._pending = { pos, at: Date.now() };
-    this._hass.callService("cover", "set_cover_position", { entity_id: this._config.entity, position: pos });
+    const target = cvEffectivePos(pos, cvClosedTolerance(this._config));
+    this._pending = { pos: target, at: Date.now() };
+    this._hass.callService("cover", "set_cover_position", { entity_id: this._config.entity, position: target });
     // The device usually reports back well before the deadline; this only
     // guarantees the optimistic value can't get stuck on screen.
     if (this._pendingTimer) clearTimeout(this._pendingTimer);
@@ -478,13 +565,18 @@ ha-card{overflow:hidden}
     const s = this._stateObj();
     const offline = this._isOffline();
     const fillFrom = cvFillFrom(this._config);
+    const tol = cvClosedTolerance(this._config);
     const devicePos = cvPosOf(s);
     if (this._pending && devicePos === this._pending.pos) this._pending = null;
-    const shown = cvDisplayPos(devicePos, this._dragPos, this._pending, Date.now());
+    const raw = cvDisplayPos(devicePos, this._dragPos, this._pending, Date.now());
+    const shown = cvEffectivePos(raw, tol);
 
     this.classList.toggle("offline", offline);
     this._txt(this._el.nm, this._name());
-    this._txt(this._el.stt, cvStateLabel(this._hass, s, this._dragPos !== null ? this._dragPos : (this._pending ? shown : null)));
+    this._txt(this._el.stt, cvStateLabel(this._hass, s, this._dragPos !== null ? this._dragPos : (this._pending ? raw : null), tol));
+    // Icon and bar follow the entity's state colour, same chain as HA's tile:
+    // purple while open, grey once closed.
+    this.style.setProperty("--cv-accent", cvStateColorVar(s, shown === null ? undefined : shown === 0));
 
     this._el.off.hidden = !offline;
     this._el.bar.hidden = offline;
@@ -533,7 +625,7 @@ window.customCards = window.customCards || [];
     getEntitySuggestion: (hass, entityId) => cvSuggestFor(hass, entityId),
   });
 })();
-console.info("%c COVER-COMPACT-CARD %c v1.0.0 ", "color:white;background:#a476e0;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#a476e0;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c COVER-COMPACT-CARD %c v1.1.0 ", "color:white;background:#a476e0;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#a476e0;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
 
 // --- irrigation-control-card.js ---
 /**

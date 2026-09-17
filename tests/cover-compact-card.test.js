@@ -39,7 +39,7 @@ const {
   cvIsDrag, cvIsMoving, cvStateLabel, cvSuggestFor, cvPickStubEntity,
   cvBoundaryPct, cvDisplayPos, cvFillFrom,
   cvClosedTolerance, cvIsClosed, cvEffectivePos, cvVarChain, cvStateColorVar,
-  cvRememberPos, cvRecallPos, cvLabelWidth,
+  cvRememberPos, cvRecallPos, cvLabelWidth, cvSlatCount,
 } = ctx;
 
 const rect = { left: 100, width: 200 };           // bar spans x = 100 … 300
@@ -131,6 +131,50 @@ test("cvFillFrom defaults to right and only accepts left", () => {
   assert.equal(cvFillFrom({}), "right");
   assert.equal(cvFillFrom({ fill_from: "left" }), "left");
   assert.equal(cvFillFrom({ fill_from: "nonsense" }), "right");
+});
+
+// ── icon: slats lowered from the top, as many as the cover is closed ──
+
+const CV_SLATS = 4;   // a top-level const of the card is not visible on the vm global
+
+test("cvSlatCount is empty when open and full when closed", () => {
+  assert.equal(cvSlatCount(100), 0);
+  assert.equal(cvSlatCount(0), CV_SLATS);
+});
+
+test("cvSlatCount follows the closed share, one slat per quarter", () => {
+  assert.equal(cvSlatCount(75), 1);
+  assert.equal(cvSlatCount(50), 2);
+  assert.equal(cvSlatCount(25), 3);
+});
+
+// A shutter barely open must not look shut, and one barely closed must not
+// look wide open: the rounding is what decides both.
+test("cvSlatCount rounds to the nearest slat and never overflows", () => {
+  assert.equal(cvSlatCount(1), CV_SLATS);
+  assert.equal(cvSlatCount(5), CV_SLATS);
+  assert.equal(cvSlatCount(95), 0);
+  assert.equal(cvSlatCount(99), 0);
+  for (let p = 0; p <= 100; p++) {
+    const n = cvSlatCount(p);
+    assert.ok(Number.isInteger(n) && n >= 0 && n <= CV_SLATS, `slats out of range at ${p}`);
+  }
+});
+
+// The count must never go backwards as the shutter comes down.
+test("cvSlatCount is monotonic", () => {
+  let prev = 0;
+  for (let p = 100; p >= 0; p--) {
+    const n = cvSlatCount(p);
+    assert.ok(n >= prev, `slat count dropped from ${prev} to ${n} at ${p}`);
+    prev = n;
+  }
+});
+
+test("cvSlatCount has no answer without a position", () => {
+  assert.equal(cvSlatCount(null), null);
+  assert.equal(cvSlatCount(undefined), null);
+  assert.equal(cvSlatCount("boh"), null);
 });
 
 // ── name column width: fixed so stacked cards get identical bars ──

@@ -2,6 +2,12 @@
  * Cover Compact Card for Home Assistant
  * One-row Lovelace card for covers (tapparelle / shutters / curtains)
  *
+ * (unreleased) — The icon is a shutter that follows the position: four slats,
+ *          lowered from the top, one per quarter closed — a raised shutter is
+ *          an empty window, a closed one is full. It tracks the finger during a
+ *          drag like the bar does. Four and not five because at 20px the gap
+ *          between slats has to stay wider than the stroke, or every position
+ *          reads as the same solid grid.
  * (unreleased) — Fixed-width name column. The bar used to be the elastic
  *          element, so its width was "whatever the name left over" and every
  *          card of a stack got a different one. The name column now has a fixed
@@ -134,6 +140,14 @@ const CV_MAX_CLOSED_TOLERANCE = 10;
 // leaves", and a long name makes its card's bar visibly shorter than its
 // neighbours'. clamp() keeps it readable on a phone and stops it eating the bar
 // on a wide screen.
+// The icon is a little shutter: as many of its slats are lowered as the cover
+// is closed. Four, not five — at 20px the gap between slats has to stay wider
+// than the stroke or the window reads as a solid grid at every position.
+const CV_SLATS = 4;
+const CV_SLAT_ON = "1";
+const CV_SLAT_OFF = "0.13";      // a ghost, so a raised shutter looks like an empty window
+const CV_SLAT_UNKNOWN = "0.5";   // no position at all — neither open nor closed
+
 const CV_DEFAULT_LABEL_WIDTH = "clamp(120px,44%,220px)";
 const CV_LABEL_WIDTH_RE = /^\d{1,4}(\.\d+)?(px|%|rem|em)$/;
 
@@ -320,10 +334,26 @@ function cvLabelWidth(config) {
   return CV_LABEL_WIDTH_RE.test(v) && parseFloat(v) > 0 ? v : null;
 }
 
+// How many slats are down, counted from the top. Continuous, not three states:
+// while dragging it follows the finger like the bar does.
+function cvSlatCount(position) {
+  const p = cvClampPos(position);
+  if (p === null) return null;
+  const n = Math.round(((100 - p) * CV_SLATS) / 100);
+  return Math.max(0, Math.min(CV_SLATS, n));
+}
+
 // ── Shared markup ──
 function cvIconSvg() {
-  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
-    `<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 8h16M4 12h16M4 16h16"/></svg>`;
+  const slats = [];
+  for (let i = 0; i < CV_SLATS; i++) {
+    const y = 9.6 + i * 2.9;
+    slats.push(`<line class="sl" x1="6.6" y1="${y}" x2="17.4" y2="${y}" stroke-width="1.5" opacity="${CV_SLAT_OFF}"/>`);
+  }
+  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+    `<rect x="3.7" y="3.7" width="16.6" height="16.6" rx="2.2"/>` +
+    `<rect class="box" x="5.6" y="5.4" width="12.8" height="2.2" rx="1.1" fill="currentColor" stroke="none"/>` +
+    slats.join("") + `</svg>`;
 }
 
 // ── Visual editor ──
@@ -538,6 +568,7 @@ class CoverCompactCard extends HTMLElement {
 ha-card{overflow:hidden}
 .row{display:flex;align-items:stretch;gap:12px;padding:10px 12px}
 .left{display:flex;align-items:center;gap:10px;min-width:0;flex:0 1 var(--cv-label-width,${CV_DEFAULT_LABEL_WIDTH})}
+.di svg .sl{transition:opacity .3s}
 .di{width:36px;height:36px;flex:0 0 36px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:var(--cv-accent);background:color-mix(in srgb,var(--cv-accent) 16%,transparent);cursor:pointer;transition:color .3s,background .3s}
 .txt{min-width:0;cursor:pointer}
 .nm{font-size:13px;font-weight:600;color:var(--cv-tm);line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -570,6 +601,7 @@ ha-card{overflow:hidden}
       nm: r.getElementById("nm"), stt: r.getElementById("stt"),
       bar: r.getElementById("bar"), fill: r.getElementById("fill"),
       knob: r.getElementById("knob"),
+      slats: Array.from(r.querySelectorAll(".di .sl")),
     };
     const moreInfo = () => this.dispatchEvent(new CustomEvent("hass-more-info", {
       detail: { entityId: this._config.entity }, bubbles: true, composed: true,
@@ -658,6 +690,11 @@ ha-card{overflow:hidden}
     // Icon and bar follow the entity's state colour, same chain as HA's tile:
     // purple while open, grey once closed, --state-unavailable-color offline.
     this.style.setProperty("--cv-accent", cvStateColorVar(s, shown === null ? undefined : shown === 0));
+    const slats = cvSlatCount(shown);
+    this._el.slats.forEach((el, i) => {
+      const o = slats === null ? CV_SLAT_UNKNOWN : (i < slats ? CV_SLAT_ON : CV_SLAT_OFF);
+      if (el.getAttribute("opacity") !== o) el.setAttribute("opacity", o);
+    });
     const labelWidth = cvLabelWidth(this._config);
     if (labelWidth) this.style.setProperty("--cv-label-width", labelWidth);
     else this.style.removeProperty("--cv-label-width");

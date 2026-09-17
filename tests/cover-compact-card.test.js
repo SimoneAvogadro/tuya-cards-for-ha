@@ -39,6 +39,7 @@ const {
   cvIsDrag, cvIsMoving, cvStateLabel, cvSuggestFor, cvPickStubEntity,
   cvBoundaryPct, cvDisplayPos, cvFillFrom,
   cvClosedTolerance, cvIsClosed, cvEffectivePos, cvVarChain, cvStateColorVar,
+  cvRememberPos, cvRecallPos,
 } = ctx;
 
 const rect = { left: 100, width: 200 };           // bar spans x = 100 … 300
@@ -190,6 +191,49 @@ test("cvStateLabel: offline", () => {
   assert.equal(cvStateLabel(hass({}), st("unavailable"), null, 0), "Offline");
   assert.equal(cvStateLabel(hass({}), st("unknown"), null, 0), "Sconosciuto");
   assert.equal(cvStateLabel(hass({}), undefined, null, 0), "Offline");
+});
+test("cvStateLabel: offline keeps the last known position", () => {
+  assert.equal(cvStateLabel(hass({}), st("unavailable"), 23, 1), "Offline · 23%");
+  assert.equal(cvStateLabel(hass({}), st("unavailable"), 0, 1), "Offline · Chiuso");
+  // the tolerance applies to the remembered value too
+  assert.equal(cvStateLabel(hass({}), st("unavailable"), 1, 1), "Offline · Chiuso");
+  assert.equal(cvStateLabel(hass({}), st("unavailable"), 1, 0), "Offline · 1%");
+});
+
+// ── remembering the position across an outage (HA drops current_position) ──
+const fakeStore = () => {
+  const m = new Map();
+  return { m, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v) };
+};
+test("cvRememberPos / cvRecallPos round-trip", () => {
+  const s0 = fakeStore();
+  cvRememberPos(s0, "cover.bagno", 23);
+  assert.equal(cvRecallPos(s0, "cover.bagno"), 23);
+  assert.equal(cvRecallPos(s0, "cover.altra"), null);
+  assert.equal([...s0.m.keys()][0], "tuya-cover-pos:cover.bagno");
+});
+test("cvRememberPos ignores a missing position, so an outage cannot erase it", () => {
+  const s0 = fakeStore();
+  cvRememberPos(s0, "cover.bagno", 23);
+  cvRememberPos(s0, "cover.bagno", null);
+  cvRememberPos(s0, "cover.bagno", undefined);
+  assert.equal(cvRecallPos(s0, "cover.bagno"), 23);
+});
+test("storage that throws or is absent degrades to no memory", () => {
+  const boom = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+  assert.doesNotThrow(() => cvRememberPos(boom, "cover.bagno", 23));
+  assert.equal(cvRecallPos(boom, "cover.bagno"), null);
+  assert.equal(cvRecallPos(null, "cover.bagno"), null);
+  assert.doesNotThrow(() => cvRememberPos(null, "cover.bagno", 23));
+});
+test("a garbage stored value is ignored", () => {
+  const s0 = fakeStore();
+  s0.m.set("tuya-cover-pos:cover.bagno", "boh");
+  assert.equal(cvRecallPos(s0, "cover.bagno"), null);
+});
+test("the bar still draws the remembered position while offline", () => {
+  assert.equal(cvFillPct(cvEffectivePos(23, 1)), 77);
+  assert.ok(cvStateColorVar(st("unavailable"), undefined).includes("--state-unavailable-color"));
 });
 
 // ── closed tolerance: the TS130F parks at 1% and HA still calls it open ──

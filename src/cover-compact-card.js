@@ -2,6 +2,13 @@
  * Cover Compact Card for Home Assistant
  * One-row Lovelace card for covers (tapparelle / shutters / curtains)
  *
+ * (unreleased) — Offline keeps the last known position. HA drops
+ *          current_position when a cover goes unavailable, so the card
+ *          remembers the last one it saw (in memory, mirrored to
+ *          localStorage so a page reload keeps it) and still draws the bar
+ *          at that position — greyed with --state-unavailable-color, no
+ *          handle, not draggable — with "Offline · 23%" as the state line.
+ *          The red Offline pill that replaced the bar is gone.
  * v1.1.0 — Colour: resolve the entity state colour through the same variable
  *          chain HA uses (--state-cover-<dc>-<state>-color → --state-cover-
  *          <state>-color → --state-cover-active|inactive-color → --state-
@@ -165,6 +172,22 @@ function cvEffectivePos(position, tolerance) {
   return cvIsClosed(p, tolerance) ? 0 : p;
 }
 
+// HA strips current_position when a cover goes unavailable, so the last known
+// position has to be kept here. localStorage makes it survive a page reload,
+// which is when it matters most: a cover can be offline for hours.
+const CV_POS_STORE_PREFIX = "tuya-cover-pos:";
+
+function cvRememberPos(store, entityId, position) {
+  const p = cvClampPos(position);
+  if (!store || !entityId || p === null) return;
+  try { store.setItem(CV_POS_STORE_PREFIX + entityId, String(p)); } catch (_) { /* private mode */ }
+}
+
+function cvRecallPos(store, entityId) {
+  if (!store || !entityId) return null;
+  try { return cvClampPos(store.getItem(CV_POS_STORE_PREFIX + entityId)); } catch (_) { return null; }
+}
+
 function cvIsDrag(dx) { return Math.abs(dx) >= CV_DRAG_MIN_PX; }
 
 function cvIsMoving(state) { return state === "opening" || state === "closing"; }
@@ -180,7 +203,12 @@ function cvDisplayPos(devicePos, dragPos, pending, now) {
 function cvStateLabel(hass, stateObj, override, tolerance) {
   const t = (k) => _cv(hass, k);
   const state = stateObj?.state;
-  if (!state || state === "unavailable") return t("offline");
+  if (!state || state === "unavailable") {
+    // `override` carries the last position we saw before the cover went away.
+    const last = cvEffectivePos(override, tolerance);
+    if (last === null) return t("offline");
+    return `${t("offline")} · ${last === 0 ? t("closed") : `${last}%`}`;
+  }
   if (state === "unknown") return t("unknown");
   // The dragged / commanded value takes over both the percentage and the word:
   // dragging to 0 reads "Closed" even while the device still reports open.
@@ -406,6 +434,7 @@ class CoverCompactCard extends HTMLElement {
     this._dragPos = null;
     this._pending = null;   // {pos, at} — commanded value, until the device agrees
     this._pendingTimer = null;
+    this._lastPos = null;   // last position seen while the cover was reachable
   }
 
   static getConfigElement() { return document.createElement("cover-compact-card-editor"); }
@@ -437,6 +466,8 @@ class CoverCompactCard extends HTMLElement {
 
   _stateObj() { return this._hass?.states?.[this._config.entity]; }
 
+  _store() { try { return window.localStorage; } catch (_) { return null; } }
+
   _name() {
     if (this._config.name) return this._config.name;
     return this._stateObj()?.attributes?.friendly_name || _cv(this._hass, "defaultName");
@@ -452,7 +483,6 @@ class CoverCompactCard extends HTMLElement {
   }
 
   _createDOM() {
-    const t = (k) => _cv(this._hass, k);
     this.shadowRoot.innerHTML = `
 <style>
 :host{--cv-accent:var(--state-cover-open-color,var(--state-active-color,#a476e0));--cv-track:rgba(127,127,127,.22);--cv-tm:var(--primary-text-color,#e8e8f0);--cv-ts:var(--secondary-text-color,#8b8da5);--danger:#e25555}
@@ -469,9 +499,8 @@ ha-card{overflow:hidden}
 .bar.dragging{cursor:grabbing}
 .bar.dragging .fill,.bar.dragging .knob{transition:none}
 .bar.locked{cursor:default}
-.off{flex:1 1 45%;min-width:100px;align-self:stretch;display:flex;align-items:center;justify-content:center;border-radius:10px;background:rgba(226,85,85,.13);color:var(--danger);font-size:12px;font-weight:600}
-:host(.offline) .di{color:var(--danger);background:rgba(226,85,85,.13)}
 :host(.offline) .stt{color:var(--danger)}
+:host(.offline) .bar{cursor:default}
 [hidden]{display:none!important}
 </style>
 <ha-card>
@@ -484,7 +513,6 @@ ha-card{overflow:hidden}
       </div>
     </div>
     <div class="bar" id="bar"><div class="fill" id="fill"></div><div class="knob" id="knob"></div></div>
-    <div class="off" id="off" hidden>${t("offline")}</div>
   </div>
 </ha-card>`;
     const r = this.shadowRoot;
@@ -492,7 +520,7 @@ ha-card{overflow:hidden}
       icon: r.getElementById("icon"), txt: r.getElementById("txt"),
       nm: r.getElementById("nm"), stt: r.getElementById("stt"),
       bar: r.getElementById("bar"), fill: r.getElementById("fill"),
-      knob: r.getElementById("knob"), off: r.getElementById("off"),
+      knob: r.getElementById("knob"),
     };
     const moreInfo = () => this.dispatchEvent(new CustomEvent("hass-more-info", {
       detail: { entityId: this._config.entity }, bubbles: true, composed: true,
@@ -558,21 +586,29 @@ ha-card{overflow:hidden}
     const offline = this._isOffline();
     const fillFrom = cvFillFrom(this._config);
     const tol = cvClosedTolerance(this._config);
-    const devicePos = cvPosOf(s);
+    let devicePos = cvPosOf(s);
+    if (devicePos !== null) {
+      this._lastPos = devicePos;
+      cvRememberPos(this._store(), this._config.entity, devicePos);
+    } else if (offline) {
+      // HA drops current_position on unavailable: fall back to what we saw last,
+      // then to what a previous page load stored.
+      if (this._lastPos === null) this._lastPos = cvRecallPos(this._store(), this._config.entity);
+      devicePos = this._lastPos;
+    }
     if (this._pending && devicePos === this._pending.pos) this._pending = null;
     const raw = cvDisplayPos(devicePos, this._dragPos, this._pending, Date.now());
     const shown = cvEffectivePos(raw, tol);
 
     this.classList.toggle("offline", offline);
     this._txt(this._el.nm, this._name());
-    this._txt(this._el.stt, cvStateLabel(this._hass, s, this._dragPos !== null ? this._dragPos : (this._pending ? raw : null), tol));
+    this._txt(this._el.stt, cvStateLabel(
+      this._hass, s,
+      offline ? raw : (this._dragPos !== null ? this._dragPos : (this._pending ? raw : null)),
+      tol));
     // Icon and bar follow the entity's state colour, same chain as HA's tile:
-    // purple while open, grey once closed.
+    // purple while open, grey once closed, --state-unavailable-color offline.
     this.style.setProperty("--cv-accent", cvStateColorVar(s, shown === null ? undefined : shown === 0));
-
-    this._el.off.hidden = !offline;
-    this._el.bar.hidden = offline;
-    if (offline) return;
 
     this._el.bar.classList.toggle("locked", !this._canControl());
     const fill = cvFillPct(shown);
@@ -580,7 +616,7 @@ ha-card{overflow:hidden}
     this._el.fill.style.width = `${fill}%`;
     this._el.fill.style.left = fillFrom === "left" ? "0" : "auto";
     this._el.fill.style.right = fillFrom === "left" ? "auto" : "0";
-    this._el.knob.hidden = boundary === null;
+    this._el.knob.hidden = boundary === null || offline;
     // clamp so the handle stays fully inside the bar at 0% and 100%
     if (boundary !== null) this._el.knob.style.left = `clamp(0px, calc(${boundary}% - 2px), calc(100% - 4px))`;
   }

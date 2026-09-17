@@ -262,9 +262,10 @@ One-row card for covers — tapparelle, shutters, curtains. It does the same job
 - **Mirrored bar.** The fill is anchored to the **right** edge and is as long as the closed share (`100 - position`), so the handle travels right to open. `fill_from: left` restores Home Assistant's orientation.
 - **Drag only, no tap.** The pointer has to travel at least 2 px before the gesture counts, so a mis-tap can never move a shutter. The percentage and the fill follow the finger live and `cover.set_cover_position` goes out once, on release; the commanded value stays on screen until the device reports it back (8 s ceiling), so the bar doesn't snap back while the motor starts.
 - **Shown in the "by entity" card picker.** The card registers `getEntitySuggestion`, so picking a positionable cover in *Add card → By entity* lists it, with a live preview, right under the tile variants. Needs HA 2026.6+ (frontend [#52228](https://github.com/home-assistant/frontend/pull/52228)); on older versions the hook is ignored and the card is still reachable from the *By card* tab.
-- **Visual editor** listing only covers that declare `SET_POSITION`, plus the name and the bar direction. Tap the icon or the name for the more-info dialog (where open / close / stop live).
+- **Visual editor** listing only covers that declare `SET_POSITION`, plus the name, the bar direction, the closed tolerance and the name-column width. Tap the icon or the name for the more-info dialog (where open / close / stop live).
 - **Home Assistant's own colours.** Icon and bar resolve the entity state colour through the same variable chain the frontend uses — `--state-cover-<device_class>-<state>-color` → `--state-cover-<state>-color` → `--state-cover-active|inactive-color` → `--state-active|inactive-color` — so the card is purple while open and grey once closed, and follows a custom theme. (Note for anyone copying this: `--state-cover-open-color` does not exist; the purple lives on `--state-cover-active-color`, and skipping that step lands on the amber `--state-active-color`.)
 - **`closed_tolerance`** (default `1`). Many Tuya roller-shutter motors — the TS130F among them — run all the way down and still report `1` as their final position, so Home Assistant keeps the cover `open · 1%` when it is visibly shut. At or below the tolerance the card reads *Chiuso*, draws the bar full and greys it, and a drag down there commands position `0`. Set it to `0` to stay literal to HA's state. A proper *Calibration mode* run on the motor is the fix at the source; this is the display-side workaround.
+- **Bars line up across cards.** The name column has a fixed width — `clamp(120px, 44%, 220px)` — and the bar takes whatever is left, so a stack of covers gets bars of identical width no matter how long each name is. Without it the bar is the elastic element, and *Soggiorno Centrale* ends up with a visibly shorter bar than *Bagno*. Override with `label_width` (`170px`, `44%`, a bare number = pixels); names that don't fit ellipsize.
 - **Offline keeps the last position.** Home Assistant drops `current_position` when a cover goes `unavailable`, so the card remembers the last position it saw — in memory, mirrored to `localStorage` so it survives a page reload, which is when it matters most — and keeps drawing the bar there, greyed with `--state-unavailable-color`, with no handle and no dragging. The state line reads `Offline · 23%`. A cover that has never been seen online gets an empty bar and a bare *Offline*.
 
 ```yaml
@@ -273,6 +274,7 @@ entity: cover.bagno_tapparella_bagno
 name: Tapparella bagno     # optional, defaults to the entity name
 fill_from: right           # optional: right (default) | left
 closed_tolerance: 1        # optional: 0-10, position at/below which it reads as closed
+label_width: 44%           # optional: width of the name column (px | % | rem | em)
 ```
 
 ```

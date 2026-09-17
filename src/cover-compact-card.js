@@ -2,6 +2,12 @@
  * Cover Compact Card for Home Assistant
  * One-row Lovelace card for covers (tapparelle / shutters / curtains)
  *
+ * (unreleased) — Fixed-width name column. The bar used to be the elastic
+ *          element, so its width was "whatever the name left over" and every
+ *          card of a stack got a different one. The name column now has a fixed
+ *          basis (clamp(120px,44%,220px), overridable with `label_width`) and
+ *          the bar takes the rest, so bars line up across cards; long names
+ *          ellipsize, which they never did before.
  * (unreleased) — Offline keeps the last known position. HA drops
  *          current_position when a cover goes unavailable, so the card
  *          remembers the last one it saw (in memory, mirrored to
@@ -55,6 +61,9 @@ const CV_I18N = {
     editorDirLeft: "Riempimento da sinistra (come Home Assistant)",
     editorTolerance: "Tolleranza di chiusura (%)",
     editorToleranceHint: "Sotto o pari a questa posizione la tapparella è mostrata come chiusa: molti motori Tuya riportano 1% quando sono giù del tutto",
+    editorLabelWidth: "Larghezza colonna nome",
+    editorLabelWidthPh: "44% oppure 170px",
+    editorLabelWidthHint: "Fissa dove inizia la barra, così più card in colonna hanno barre allineate e larghe uguale. Vuoto = predefinito",
     configError: "Seleziona una tapparella nella configurazione",
     defaultName: "Copertura",
     suggestLabel: "Tapparella compatta",
@@ -72,6 +81,9 @@ const CV_I18N = {
     editorDirLeft: "Fill from the left (like Home Assistant)",
     editorTolerance: "Closed tolerance (%)",
     editorToleranceHint: "At or below this position the cover reads as closed: many Tuya motors report 1% when fully down",
+    editorLabelWidth: "Name column width",
+    editorLabelWidthPh: "44% or 170px",
+    editorLabelWidthHint: "Pins where the bar starts, so stacked cards get bars of the same width. Empty = default",
     configError: "Select a cover in the configuration",
     defaultName: "Cover",
     suggestLabel: "Compact cover",
@@ -89,6 +101,9 @@ const CV_I18N = {
     editorDirLeft: "从左侧填充（与 Home Assistant 一致）",
     editorTolerance: "关闭容差（%）",
     editorToleranceHint: "位置小于或等于该值时显示为关闭：许多涂鸦电机完全降下时仍报告 1%",
+    editorLabelWidth: "名称列宽度",
+    editorLabelWidthPh: "44% 或 170px",
+    editorLabelWidthHint: "固定进度条的起点，使多张卡片的进度条宽度一致。留空为默认值",
     configError: "请在配置中选择一个窗帘",
     defaultName: "窗帘",
     suggestLabel: "紧凑窗帘卡片",
@@ -114,6 +129,13 @@ const CV_PENDING_MS = 8000;
 // or below the tolerance read — and are commanded — as fully closed.
 const CV_DEFAULT_CLOSED_TOLERANCE = 1;
 const CV_MAX_CLOSED_TOLERANCE = 10;
+// The name column is fixed-width so that the bar starts at the same x on every
+// card of a stack: with an auto-sized column the bar is just "whatever the name
+// leaves", and a long name makes its card's bar visibly shorter than its
+// neighbours'. clamp() keeps it readable on a phone and stops it eating the bar
+// on a wide screen.
+const CV_DEFAULT_LABEL_WIDTH = "clamp(120px,44%,220px)";
+const CV_LABEL_WIDTH_RE = /^\d{1,4}(\.\d+)?(px|%|rem|em)$/;
 
 // ── Pure logic (unit-tested in tests/cover-compact-card.test.js) ──
 
@@ -285,6 +307,19 @@ function cvPickStubEntity(hass, entities, entitiesFallback) {
 
 function cvFillFrom(config) { return config?.fill_from === "left" ? "left" : "right"; }
 
+// A CSS length for the name column, or null for the default. Only a plain
+// number + unit is accepted: the value goes into a custom property, so anything
+// else would be an injection point as well as a broken layout.
+function cvLabelWidth(config) {
+  const raw = config?.label_width;
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (typeof raw === "number") return Number.isFinite(raw) && raw > 0 ? `${raw}px` : null;
+  if (typeof raw !== "string") return null;
+  const v = raw.trim();
+  if (/^\d{1,4}(\.\d+)?$/.test(v)) return parseFloat(v) > 0 ? `${v}px` : null;
+  return CV_LABEL_WIDTH_RE.test(v) && parseFloat(v) > 0 ? v : null;
+}
+
 // ── Shared markup ──
 function cvIconSvg() {
   return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
@@ -344,6 +379,11 @@ select:focus,input:focus{border-color:#4a90d9}
     <input type="number" id="tol" min="0" max="${CV_MAX_CLOSED_TOLERANCE}">
     <div class="hint">${t("editorToleranceHint")}</div>
   </div>
+  <div class="row">
+    <label>${t("editorLabelWidth")}</label>
+    <input type="text" id="lw" placeholder="${t("editorLabelWidthPh")}">
+    <div class="hint">${t("editorLabelWidthHint")}</div>
+  </div>
 </div>`;
     const r = this.shadowRoot;
     this._el = {
@@ -353,6 +393,7 @@ select:focus,input:focus{border-color:#4a90d9}
       nm: r.getElementById("nm"),
       dir: r.getElementById("dir"),
       tol: r.getElementById("tol"),
+      lw: r.getElementById("lw"),
     };
     this._el.en.addEventListener("change", (e) => {
       this._config = { ...this._config, entity: e.target.value };
@@ -378,6 +419,12 @@ select:focus,input:focus{border-color:#4a90d9}
       else this._config = { ...this._config, closed_tolerance: v };
       this._fire();
     });
+    this._el.lw.addEventListener("input", (e) => {
+      const v = cvLabelWidth({ label_width: e.target.value });
+      if (v) this._config = { ...this._config, label_width: e.target.value.trim() };
+      else { const { label_width, ...rest } = this._config; this._config = rest; }
+    });
+    this._el.lw.addEventListener("change", () => this._fire());
     this._domBuilt = true;
   }
 
@@ -412,6 +459,8 @@ select:focus,input:focus{border-color:#4a90d9}
     if (ae !== this._el.dir && this._el.dir.value !== dir) this._el.dir.value = dir;
     const tol = String(cvClosedTolerance(this._config));
     if (ae !== this._el.tol && this._el.tol.value !== tol) this._el.tol.value = tol;
+    const lw = this._config.label_width ? String(this._config.label_width) : "";
+    if (ae !== this._el.lw && this._el.lw.value !== lw) this._el.lw.value = lw;
   }
 
   _fire() { this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true })); }
@@ -488,12 +537,12 @@ class CoverCompactCard extends HTMLElement {
 :host{--cv-accent:var(--state-cover-open-color,var(--state-active-color,#a476e0));--cv-track:rgba(127,127,127,.22);--cv-tm:var(--primary-text-color,#e8e8f0);--cv-ts:var(--secondary-text-color,#8b8da5);--danger:#e25555}
 ha-card{overflow:hidden}
 .row{display:flex;align-items:stretch;gap:12px;padding:10px 12px}
-.left{display:flex;align-items:center;gap:10px;min-width:0;flex:0 1 auto}
+.left{display:flex;align-items:center;gap:10px;min-width:0;flex:0 1 var(--cv-label-width,${CV_DEFAULT_LABEL_WIDTH})}
 .di{width:36px;height:36px;flex:0 0 36px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:var(--cv-accent);background:color-mix(in srgb,var(--cv-accent) 16%,transparent);cursor:pointer;transition:color .3s,background .3s}
 .txt{min-width:0;cursor:pointer}
 .nm{font-size:13px;font-weight:600;color:var(--cv-tm);line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stt{font-size:12px;color:var(--cv-ts);line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bar{position:relative;flex:1 1 45%;min-width:100px;align-self:stretch;border-radius:10px;background:var(--cv-track);overflow:hidden;cursor:ew-resize;touch-action:pan-y;-webkit-tap-highlight-color:transparent}
+.bar{position:relative;flex:1 1 auto;min-width:100px;align-self:stretch;border-radius:10px;background:var(--cv-track);overflow:hidden;cursor:ew-resize;touch-action:pan-y;-webkit-tap-highlight-color:transparent}
 .fill{position:absolute;top:0;bottom:0;background:var(--cv-accent);transition:width .35s ease,left .35s ease,right .35s ease}
 .knob{position:absolute;top:6px;bottom:6px;width:4px;border-radius:2px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.18);transition:left .35s ease}
 .bar.dragging{cursor:grabbing}
@@ -609,6 +658,9 @@ ha-card{overflow:hidden}
     // Icon and bar follow the entity's state colour, same chain as HA's tile:
     // purple while open, grey once closed, --state-unavailable-color offline.
     this.style.setProperty("--cv-accent", cvStateColorVar(s, shown === null ? undefined : shown === 0));
+    const labelWidth = cvLabelWidth(this._config);
+    if (labelWidth) this.style.setProperty("--cv-label-width", labelWidth);
+    else this.style.removeProperty("--cv-label-width");
 
     this._el.bar.classList.toggle("locked", !this._canControl());
     const fill = cvFillPct(shown);

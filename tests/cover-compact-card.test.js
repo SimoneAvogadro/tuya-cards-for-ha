@@ -39,7 +39,7 @@ const {
   cvIsDrag, cvIsMoving, cvStateLabel, cvSuggestFor, cvPickStubEntity,
   cvBoundaryPct, cvDisplayPos, cvFillFrom,
   cvClosedTolerance, cvIsClosed, cvEffectivePos, cvVarChain, cvStateColorVar,
-  cvRememberPos, cvRecallPos,
+  cvRememberPos, cvRecallPos, cvLabelWidth,
 } = ctx;
 
 const rect = { left: 100, width: 200 };           // bar spans x = 100 … 300
@@ -131,6 +131,38 @@ test("cvFillFrom defaults to right and only accepts left", () => {
   assert.equal(cvFillFrom({}), "right");
   assert.equal(cvFillFrom({ fill_from: "left" }), "left");
   assert.equal(cvFillFrom({ fill_from: "nonsense" }), "right");
+});
+
+// ── name column width: fixed so stacked cards get identical bars ──
+
+test("cvLabelWidth returns null when unset, so the CSS default applies", () => {
+  assert.equal(cvLabelWidth(undefined), null);
+  assert.equal(cvLabelWidth({}), null);
+  assert.equal(cvLabelWidth({ label_width: "" }), null);
+  assert.equal(cvLabelWidth({ label_width: null }), null);
+});
+
+test("cvLabelWidth accepts a number or a bare numeric string as pixels", () => {
+  assert.equal(cvLabelWidth({ label_width: 170 }), "170px");
+  assert.equal(cvLabelWidth({ label_width: "170" }), "170px");
+  assert.equal(cvLabelWidth({ label_width: " 170 " }), "170px");
+});
+
+test("cvLabelWidth keeps a valid CSS length as written", () => {
+  assert.equal(cvLabelWidth({ label_width: "44%" }), "44%");
+  assert.equal(cvLabelWidth({ label_width: "170px" }), "170px");
+  assert.equal(cvLabelWidth({ label_width: "12rem" }), "12rem");
+  assert.equal(cvLabelWidth({ label_width: " 44% " }), "44%");
+});
+
+// The value lands in a custom property, so anything that is not a plain
+// number + unit must be dropped rather than passed through.
+test("cvLabelWidth rejects junk, functions and zero", () => {
+  for (const v of ["auto", "44 %", "calc(50% - 10px)", "clamp(1px,2px,3px)",
+                   "44%;color:red", "-20px", "0px", "0", 0, -5, NaN,
+                   {}, [], true, "100vw", "px"]) {
+    assert.equal(cvLabelWidth({ label_width: v }), null, `accepted ${JSON.stringify(v)}`);
+  }
 });
 
 // ── what the bar shows: finger, then commanded value, then device ──

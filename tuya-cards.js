@@ -10,19 +10,19 @@
  * Cover Compact Card for Home Assistant
  * One-row Lovelace card for covers (tapparelle / shutters / curtains)
  *
- * (unreleased) — The icon is a shutter that follows the position: four slats,
+ * v1.2.0 — The icon is a shutter that follows the position: four slats,
  *          lowered from the top, one per quarter closed — a raised shutter is
  *          an empty window, a closed one is full. It tracks the finger during a
  *          drag like the bar does. Four and not five because at 20px the gap
  *          between slats has to stay wider than the stroke, or every position
  *          reads as the same solid grid.
- * (unreleased) — Fixed-width name column. The bar used to be the elastic
+ *          Fixed-width name column. The bar used to be the elastic
  *          element, so its width was "whatever the name left over" and every
  *          card of a stack got a different one. The name column now has a fixed
  *          basis (clamp(120px,44%,220px), overridable with `label_width`) and
  *          the bar takes the rest, so bars line up across cards; long names
  *          ellipsize, which they never did before.
- * (unreleased) — Offline keeps the last known position. HA drops
+ *          Offline keeps the last known position. HA drops
  *          current_position when a cover goes unavailable, so the card
  *          remembers the last one it saw (in memory, mirrored to
  *          localStorage so a page reload keeps it) and still draws the bar
@@ -750,7 +750,7 @@ window.customCards = window.customCards || [];
     getEntitySuggestion: (hass, entityId) => cvSuggestFor(hass, entityId),
   });
 })();
-console.info("%c COVER-COMPACT-CARD %c v1.1.0 ", "color:white;background:#a476e0;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#a476e0;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c COVER-COMPACT-CARD %c v1.2.0 ", "color:white;background:#a476e0;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#a476e0;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
 
 // --- irrigation-control-card.js ---
 /**

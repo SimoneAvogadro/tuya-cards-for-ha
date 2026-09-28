@@ -10,6 +10,15 @@
  * Cover Compact Card for Home Assistant
  * One-row Lovelace card for covers (tapparelle / shutters / curtains)
  *
+ * v1.3.0 — Decorated bar (on by default, `decor: false` turns it off). The
+ *          closed share is striped with vertical slats — a real shutter turned
+ *          90° — and the stripes are anchored to the edge by the handle, so
+ *          they travel with it like a shutter rolling down. The open share
+ *          shows the sun (mdi:weather-sunny) or the moon (mdi:weather-night),
+ *          from sun.sun or, without it, the local hour. The icon is nearly as
+ *          tall as the bar and centred in the open share; once the share is
+ *          narrower than the icon it stops at the bar's edge and the shutter
+ *          slides over it. Hidden offline and when the position is unknown.
  * v1.2.0 — The icon is a shutter that follows the position: four slats,
  *          lowered from the top, one per quarter closed — a raised shutter is
  *          an empty window, a closed one is full. It tracks the finger during a
@@ -78,6 +87,8 @@ const CV_I18N = {
     editorLabelWidth: "Larghezza colonna nome",
     editorLabelWidthPh: "44% oppure 170px",
     editorLabelWidthHint: "Fissa dove inizia la barra, così più card in colonna hanno barre allineate e larghe uguale. Vuoto = predefinito",
+    editorDecor: "Barra decorata",
+    editorDecorHint: "Lamelle sulla parte chiusa, sole o luna sulla parte aperta",
     configError: "Seleziona una tapparella nella configurazione",
     defaultName: "Copertura",
     suggestLabel: "Tapparella compatta",
@@ -98,6 +109,8 @@ const CV_I18N = {
     editorLabelWidth: "Name column width",
     editorLabelWidthPh: "44% or 170px",
     editorLabelWidthHint: "Pins where the bar starts, so stacked cards get bars of the same width. Empty = default",
+    editorDecor: "Decorated bar",
+    editorDecorHint: "Slats on the closed part, sun or moon on the open part",
     configError: "Select a cover in the configuration",
     defaultName: "Cover",
     suggestLabel: "Compact cover",
@@ -118,6 +131,8 @@ const CV_I18N = {
     editorLabelWidth: "名称列宽度",
     editorLabelWidthPh: "44% 或 170px",
     editorLabelWidthHint: "固定进度条的起点，使多张卡片的进度条宽度一致。留空为默认值",
+    editorDecor: "装饰进度条",
+    editorDecorHint: "关闭部分显示百叶条纹，打开部分显示太阳或月亮",
     configError: "请在配置中选择一个窗帘",
     defaultName: "窗帘",
     suggestLabel: "紧凑窗帘卡片",
@@ -155,6 +170,17 @@ const CV_SLATS = 4;
 const CV_SLAT_ON = "1";
 const CV_SLAT_OFF = "0.13";      // a ghost, so a raised shutter looks like an empty window
 const CV_SLAT_UNKNOWN = "0.5";   // no position at all — neither open nor closed
+
+// Decorated bar. Without sun.sun, "night" is the local hour outside 7–19.
+// The moon is HA's own sun-below-horizon indigo mixed with the text colour:
+// the plain indigo all but disappears on the dark theme's track.
+const CV_DAY_FROM_H = 7;
+const CV_NIGHT_FROM_H = 19;
+// mdi:weather-sunny and mdi:weather-night (Material Design Icons, Apache 2.0),
+// inlined rather than <ha-icon>: ha-icon sizes through --mdc-icon-size, a fixed
+// length, while this one has to follow the bar's height; and it loads lazily.
+const CV_SUN_PATH = "M12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,2L14.39,5.42C13.65,5.15 12.84,5 12,5C11.16,5 10.35,5.15 9.61,5.42L12,2M3.34,7L7.5,6.65C6.9,7.16 6.36,7.78 5.94,8.5C5.5,9.24 5.25,10 5.11,10.79L3.34,7M3.36,17L5.12,13.23C5.26,14 5.53,14.78 5.95,15.5C6.37,16.24 6.91,16.86 7.5,17.37L3.36,17M20.65,7L18.88,10.79C18.74,10 18.47,9.23 18.05,8.5C17.63,7.78 17.1,7.15 16.5,6.64L20.65,7M20.64,17L16.5,17.36C17.09,16.85 17.62,16.22 18.04,15.5C18.46,14.77 18.73,14 18.87,13.21L20.64,17M12,22L9.59,18.56C10.33,18.83 11.14,19 12,19C12.82,19 13.63,18.83 14.37,18.56L12,22Z";
+const CV_MOON_PATH = "M17.75,4.09L15.22,6.03L16.13,9.09L13.5,7.28L10.87,9.09L11.78,6.03L9.25,4.09L12.44,4L13.5,1L14.56,4L17.75,4.09M21.25,11L19.61,12.25L20.2,14.23L18.5,13.06L16.8,14.23L17.39,12.25L15.75,11L17.81,10.95L18.5,9L19.19,10.95L21.25,11M18.97,15.95C19.8,15.87 20.69,17.05 20.16,17.8C19.84,18.25 19.5,18.67 19.08,19.07C15.17,23 8.84,23 4.94,19.07C1.03,15.17 1.03,8.83 4.94,4.93C5.34,4.53 5.76,4.17 6.21,3.85C6.96,3.32 8.14,4.21 8.06,5.04C7.79,7.9 8.75,10.87 10.95,13.06C13.14,15.26 16.1,16.22 18.97,15.95M17.33,17.97C14.5,17.81 11.7,16.64 9.53,14.5C7.36,12.31 6.2,9.5 6.04,6.68C3.23,9.82 3.34,14.64 6.35,17.66C9.37,20.67 14.19,20.78 17.33,17.97Z";
 
 const CV_DEFAULT_LABEL_WIDTH = "clamp(120px,44%,220px)";
 const CV_LABEL_WIDTH_RE = /^\d{1,4}(\.\d+)?(px|%|rem|em)$/;
@@ -351,6 +377,21 @@ function cvSlatCount(position) {
   return Math.max(0, Math.min(CV_SLATS, n));
 }
 
+function cvDecorOn(config) { return config?.decor !== false; }
+
+// The side of the fill that faces the handle — the shutter's lower edge. The
+// slats are anchored there so they move with it, and the open share (the sky)
+// sits against the bar edge on that same side.
+function cvLeadingEdge(fillFrom) { return fillFrom === "left" ? "right" : "left"; }
+
+function cvIsNight(hass, now) {
+  const sun = hass?.states?.["sun.sun"]?.state;
+  if (sun === "below_horizon") return true;
+  if (sun === "above_horizon") return false;
+  const h = now.getHours();
+  return h < CV_DAY_FROM_H || h >= CV_NIGHT_FROM_H;
+}
+
 // ── Shared markup ──
 function cvIconSvg() {
   const slats = [];
@@ -362,6 +403,11 @@ function cvIconSvg() {
     `<rect x="3.7" y="3.7" width="16.6" height="16.6" rx="2.2"/>` +
     `<rect class="box" x="5.6" y="5.4" width="12.8" height="2.2" rx="1.1" fill="currentColor" stroke="none"/>` +
     slats.join("") + `</svg>`;
+}
+
+function cvSkySvg() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">` +
+    `<path class="sun" d="${CV_SUN_PATH}"/><path class="moon" d="${CV_MOON_PATH}"/></svg>`;
 }
 
 // ── Visual editor ──
@@ -389,6 +435,8 @@ select,input[type="text"],input[type="number"]{width:100%;padding:10px 12px;bord
 select:focus,input:focus{border-color:#4a90d9}
 .hint{font-size:11px;color:var(--disabled-text-color,#5c5e76);margin-top:4px}
 .empty{font-size:13px;color:var(--disabled-text-color);padding:12px;text-align:center;background:var(--divider-color,rgba(255,255,255,.06));border-radius:8px}
+label.chk{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--primary-text-color);margin:0;cursor:pointer}
+label.chk input{width:18px;height:18px;margin:0;accent-color:var(--primary-color,#4a90d9)}
 [hidden]{display:none!important}
 </style>
 <div class="editor">
@@ -422,6 +470,10 @@ select:focus,input:focus{border-color:#4a90d9}
     <input type="text" id="lw" placeholder="${t("editorLabelWidthPh")}">
     <div class="hint">${t("editorLabelWidthHint")}</div>
   </div>
+  <div class="row">
+    <label class="chk"><input type="checkbox" id="dc">${t("editorDecor")}</label>
+    <div class="hint">${t("editorDecorHint")}</div>
+  </div>
 </div>`;
     const r = this.shadowRoot;
     this._el = {
@@ -432,6 +484,7 @@ select:focus,input:focus{border-color:#4a90d9}
       dir: r.getElementById("dir"),
       tol: r.getElementById("tol"),
       lw: r.getElementById("lw"),
+      dc: r.getElementById("dc"),
     };
     this._el.en.addEventListener("change", (e) => {
       this._config = { ...this._config, entity: e.target.value };
@@ -463,6 +516,11 @@ select:focus,input:focus{border-color:#4a90d9}
       else { const { label_width, ...rest } = this._config; this._config = rest; }
     });
     this._el.lw.addEventListener("change", () => this._fire());
+    this._el.dc.addEventListener("change", (e) => {
+      if (e.target.checked) { const { decor, ...rest } = this._config; this._config = rest; }
+      else this._config = { ...this._config, decor: false };
+      this._fire();
+    });
     this._domBuilt = true;
   }
 
@@ -499,6 +557,7 @@ select:focus,input:focus{border-color:#4a90d9}
     if (ae !== this._el.tol && this._el.tol.value !== tol) this._el.tol.value = tol;
     const lw = this._config.label_width ? String(this._config.label_width) : "";
     if (ae !== this._el.lw && this._el.lw.value !== lw) this._el.lw.value = lw;
+    this._el.dc.checked = cvDecorOn(this._config);
   }
 
   _fire() { this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true })); }
@@ -584,8 +643,13 @@ ha-card{overflow:hidden}
 .bar{position:relative;flex:1 1 auto;min-width:100px;align-self:stretch;border-radius:10px;background:var(--cv-track);overflow:hidden;cursor:ew-resize;touch-action:pan-y;-webkit-tap-highlight-color:transparent}
 .fill{position:absolute;top:0;bottom:0;background:var(--cv-accent);transition:width .35s ease,left .35s ease,right .35s ease}
 .knob{position:absolute;top:6px;bottom:6px;width:4px;border-radius:2px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.18);transition:left .35s ease}
+.sky{position:absolute;top:0;bottom:0;display:flex;align-items:center;padding:0 6px;box-sizing:border-box;pointer-events:none;transition:width .35s ease}
+.sky svg{flex:0 0 auto;height:calc(100% - 8px);width:auto;aspect-ratio:1/1;margin:0 auto;fill:var(--state-sun-above_horizon-color,var(--amber-color,#ffc107));opacity:.85}
+.sky.night svg{fill:color-mix(in srgb,var(--state-sun-below_horizon-color,var(--indigo-color,#3f51b5)) 55%,var(--cv-tm))}
+.sky.night .sun,.sky:not(.night) .moon{display:none}
+:host(.decor) .fill{background-image:repeating-linear-gradient(var(--cv-slat-dir,90deg),transparent 0 5px,rgba(0,0,0,.2) 5px 6.5px,rgba(255,255,255,.08) 6.5px 7.5px)}
 .bar.dragging{cursor:grabbing}
-.bar.dragging .fill,.bar.dragging .knob{transition:none}
+.bar.dragging .fill,.bar.dragging .knob,.bar.dragging .sky{transition:none}
 .bar.locked{cursor:default}
 :host(.offline) .stt{color:var(--danger)}
 :host(.offline) .bar{cursor:default}
@@ -600,7 +664,7 @@ ha-card{overflow:hidden}
         <div class="stt" id="stt"></div>
       </div>
     </div>
-    <div class="bar" id="bar"><div class="fill" id="fill"></div><div class="knob" id="knob"></div></div>
+    <div class="bar" id="bar"><div class="sky" id="sky" hidden>${cvSkySvg()}</div><div class="fill" id="fill"></div><div class="knob" id="knob"></div></div>
   </div>
 </ha-card>`;
     const r = this.shadowRoot;
@@ -608,7 +672,7 @@ ha-card{overflow:hidden}
       icon: r.getElementById("icon"), txt: r.getElementById("txt"),
       nm: r.getElementById("nm"), stt: r.getElementById("stt"),
       bar: r.getElementById("bar"), fill: r.getElementById("fill"),
-      knob: r.getElementById("knob"),
+      knob: r.getElementById("knob"), sky: r.getElementById("sky"),
       slats: Array.from(r.querySelectorAll(".di .sl")),
     };
     const moreInfo = () => this.dispatchEvent(new CustomEvent("hass-more-info", {
@@ -716,6 +780,27 @@ ha-card{overflow:hidden}
     this._el.knob.hidden = boundary === null || offline;
     // clamp so the handle stays fully inside the bar at 0% and 100%
     if (boundary !== null) this._el.knob.style.left = `clamp(0px, calc(${boundary}% - 2px), calc(100% - 4px))`;
+    this._updateDecor(shown, fillFrom, offline);
+  }
+
+  // Slats on the fill, sun/moon in the open share. The sky box is exactly the
+  // open share, against the bar edge; its icon is centred with auto margins,
+  // which collapse to 0 once the box is narrower than the icon, so the icon
+  // stays pinned to the edge and the fill (painted after it) slides over it.
+  _updateDecor(shown, fillFrom, offline) {
+    const decor = cvDecorOn(this._config);
+    const sky = this._el.sky;
+    this.classList.toggle("decor", decor);
+    sky.hidden = !decor || offline || shown === null;
+    if (!decor) return;
+    const lead = cvLeadingEdge(fillFrom);
+    this.style.setProperty("--cv-slat-dir", lead === "left" ? "90deg" : "270deg");
+    if (sky.hidden) return;
+    sky.style.width = `${shown}%`;
+    sky.style.left = lead === "left" ? "0" : "auto";
+    sky.style.right = lead === "left" ? "auto" : "0";
+    sky.style.flexDirection = lead === "left" ? "row" : "row-reverse";
+    sky.classList.toggle("night", cvIsNight(this._hass, new Date()));
   }
 
   _txt(el, v) { if (el && el.textContent !== v) el.textContent = v; }
@@ -750,7 +835,7 @@ window.customCards = window.customCards || [];
     getEntitySuggestion: (hass, entityId) => cvSuggestFor(hass, entityId),
   });
 })();
-console.info("%c COVER-COMPACT-CARD %c v1.2.0 ", "color:white;background:#a476e0;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#a476e0;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c COVER-COMPACT-CARD %c v1.3.0 ", "color:white;background:#a476e0;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#a476e0;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
 
 // --- irrigation-control-card.js ---
 /**

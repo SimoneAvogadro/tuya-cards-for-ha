@@ -25,7 +25,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 | `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services (HA service **target**: listed in the automation editor's "by target" tab for every valve device) + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves (radio side in zha-tuya-quirks) | v2.16.0 |
 | `irrigation-control-card` | Lovelace card driving the services above, with battery + Zigbee signal icon | v2.10.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature (+ optional air humidity) sensors, with a tap-to-open trend panel (day / week / month) and a Zigbee signal icon | v1.7.0 |
-| `cover-compact-card` | One-row card for covers (tapparelle / shutters): name and state on the left, full-height position bar on the right, filled from the right edge; drag-only control and a live preview in the "by entity" card picker | v1.2.0 |
+| `cover-compact-card` | One-row card for covers (tapparelle / shutters): name and state on the left, full-height position bar on the right, filled from the right edge and drawn as a shutter (slats + sun/moon); drag-only control and a live preview in the "by entity" card picker | v1.3.0 |
 
 ## Installation (HACS)
 
@@ -256,13 +256,14 @@ acc_max: 80
 One-row card for covers — tapparelle, shutters, curtains. It does the same job as HA's tile card with the *cover position* feature, in half the height: the tile spends a nearly empty row on the name and state and a second one on the bar, here the name and the `Aperto · 21%` line stay stacked on the left and the bar takes the whole right side at full card height.
 
 <p>
-  <img src="docs/images/cover-compact-card.png" alt="Cover compact card: name and state on the left, position bar filled from the right" width="420">
+  <img src="docs/images/cover-compact-card.png" alt="Cover compact card: name and state on the left, position bar filled from the right with shutter slats and a sun in the open part" width="420">
 </p>
 
 - **Mirrored bar.** The fill is anchored to the **right** edge and is as long as the closed share (`100 - position`), so the handle travels right to open. `fill_from: left` restores Home Assistant's orientation.
+- **The bar looks like a shutter** (`decor`, on by default). The closed share is striped with vertical slats — a roller shutter turned on its side — anchored to the handle's edge, so they travel with it as the shutter moves. The open share shows `mdi:weather-sunny` by day and `mdi:weather-night` by night (from `sun.sun`, or the local hour 7–19 when it doesn't exist), nearly as tall as the bar and centred in the open part; once that part is narrower than the icon, the icon stays against the bar's edge and the shutter slides over it. No sun/moon offline or when the position is unknown. `decor: false` brings back the plain bar.
 - **Drag only, no tap.** The pointer has to travel at least 2 px before the gesture counts, so a mis-tap can never move a shutter. The percentage and the fill follow the finger live and `cover.set_cover_position` goes out once, on release; the commanded value stays on screen until the device reports it back (8 s ceiling), so the bar doesn't snap back while the motor starts.
 - **Shown in the "by entity" card picker.** The card registers `getEntitySuggestion`, so picking a positionable cover in *Add card → By entity* lists it, with a live preview, right under the tile variants. Needs HA 2026.6+ (frontend [#52228](https://github.com/home-assistant/frontend/pull/52228)); on older versions the hook is ignored and the card is still reachable from the *By card* tab.
-- **Visual editor** listing only covers that declare `SET_POSITION`, plus the name, the bar direction, the closed tolerance and the name-column width. Tap the icon or the name for the more-info dialog (where open / close / stop live).
+- **Visual editor** listing only covers that declare `SET_POSITION`, plus the name, the bar direction, the closed tolerance, the name-column width and the decorated-bar switch. Tap the icon or the name for the more-info dialog (where open / close / stop live).
 - **Home Assistant's own colours.** Icon and bar resolve the entity state colour through the same variable chain the frontend uses — `--state-cover-<device_class>-<state>-color` → `--state-cover-<state>-color` → `--state-cover-active|inactive-color` → `--state-active|inactive-color` — so the card is purple while open and grey once closed, and follows a custom theme. (Note for anyone copying this: `--state-cover-open-color` does not exist; the purple lives on `--state-cover-active-color`, and skipping that step lands on the amber `--state-active-color`.)
 - **`closed_tolerance`** (default `1`). Many Tuya roller-shutter motors — the TS130F among them — run all the way down and still report `1` as their final position, so Home Assistant keeps the cover `open · 1%` when it is visibly shut. At or below the tolerance the card reads *Chiuso*, draws the bar full and greys it, and a drag down there commands position `0`. Set it to `0` to stay literal to HA's state. A proper *Calibration mode* run on the motor is the fix at the source; this is the display-side workaround.
 - **The icon is the shutter.** Four slats lowered from the top, one per quarter closed: a cover that is all the way up is an empty window with its roller box, a closed one is full, and the slats follow the finger while dragging. No `device_class` gymnastics and no `ha-icon` — Material Design has `mdi:window-shutter` and `mdi:window-shutter-open` but nothing in between, so the card draws its own.
@@ -276,6 +277,7 @@ name: Tapparella bagno     # optional, defaults to the entity name
 fill_from: right           # optional: right (default) | left
 closed_tolerance: 1        # optional: 0-10, position at/below which it reads as closed
 label_width: 44%           # optional: width of the name column (px | % | rem | em)
+decor: true                # optional: false = plain bar, no slats / sun / moon
 ```
 
 ```

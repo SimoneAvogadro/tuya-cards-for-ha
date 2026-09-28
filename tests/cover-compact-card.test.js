@@ -40,6 +40,7 @@ const {
   cvBoundaryPct, cvDisplayPos, cvFillFrom,
   cvClosedTolerance, cvIsClosed, cvEffectivePos, cvVarChain, cvStateColorVar,
   cvRememberPos, cvRecallPos, cvLabelWidth, cvSlatCount,
+  cvDecorOn, cvIsNight, cvLeadingEdge,
 } = ctx;
 
 const rect = { left: 100, width: 200 };           // bar spans x = 100 … 300
@@ -377,6 +378,36 @@ test("travel states stay active; unavailable and unknown do not", () => {
   assert.ok(cvStateColorVar(cover("closing", 60), false).includes("--state-cover-active-color"));
   assert.equal(cvStateColorVar(st("unavailable"), undefined), "var(--state-unavailable-color, #8b8da5)");
   assert.ok(cvStateColorVar(st("unknown"), false).includes("--state-inactive-color"));
+});
+
+// ── decorated bar: slats + sun/moon ──
+test("cvDecorOn is on by default and off only with decor: false", () => {
+  assert.equal(cvDecorOn({}), true);
+  assert.equal(cvDecorOn(undefined), true);
+  assert.equal(cvDecorOn({ decor: true }), true);
+  assert.equal(cvDecorOn({ decor: false }), false);
+});
+test("cvLeadingEdge is the side of the fill that touches the handle", () => {
+  // default: fill anchored right, the shutter's lower edge faces left
+  assert.equal(cvLeadingEdge("right"), "left");
+  assert.equal(cvLeadingEdge("left"), "right");
+  assert.equal(cvLeadingEdge(undefined), "left");
+});
+test("cvIsNight follows sun.sun when it exists", () => {
+  const noon = new Date(2026, 8, 28, 12, 0);
+  const midnight = new Date(2026, 8, 28, 0, 30);
+  assert.equal(cvIsNight(hass({ "sun.sun": st("below_horizon") }), noon), true);
+  assert.equal(cvIsNight(hass({ "sun.sun": st("above_horizon") }), midnight), false);
+});
+test("cvIsNight falls back to the local hour (night = before 7, from 19)", () => {
+  const at = (h, m = 0) => new Date(2026, 8, 28, h, m);
+  const h = hass({});
+  assert.equal(cvIsNight(h, at(6, 59)), true);
+  assert.equal(cvIsNight(h, at(7)), false);
+  assert.equal(cvIsNight(h, at(18, 59)), false);
+  assert.equal(cvIsNight(h, at(19)), true);
+  assert.equal(cvIsNight(hass({ "sun.sun": st("unavailable") }), at(12)), false);
+  assert.equal(cvIsNight(undefined, at(23)), true);
 });
 
 // ── entity-picker suggestion (HA >= 2026.6 getEntitySuggestion) ──

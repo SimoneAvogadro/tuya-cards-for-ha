@@ -2,7 +2,38 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
-Home Assistant custom **integration** + two **Lovelace cards** for specific Tuya Zigbee devices (ZHA / Zigbee2MQTT). The integration adds reliable server-side irrigation services; each supported device gets a compact dedicated card. Everything ZHA-specific (the device quirks, including the GiEX clock sync before every open, and the keep-alive) lives in the companion [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks) integration — install both for a ZHA valve.
+## The cards at a glance
+
+<table>
+  <tr>
+    <td width="400"><img src="docs/images/irrigation-control-card.png" alt="Irrigation control card with the Time panel open" width="380"></td>
+    <td>
+      <b><a href="#irrigation-control-card">Irrigation Control Card</a></b><br>
+      <b>Fits:</b> Tuya smart irrigation valves of the GiEX QT06 family (TS0601 <code>_TZE200_a7sghmms</code> and siblings, see <a href="#supported-devices">Supported devices</a>) on ZHA or Zigbee2MQTT.<br>
+      Start a run by litres or by time, with a progress bar read from the device, the last run and its history, battery and Zigbee signal. Runs are timed server-side by the bundled integration, so they close even if the valve's own timer doesn't.
+    </td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/soil-moisture-card-trend.png" alt="Soil moisture card with the temperature trend panel open" width="380"></td>
+    <td>
+      <b><a href="#soil-moisture-card">Soil Moisture Card</a></b><br>
+      <b>Fits:</b> Zigbee soil sensors — HOBEIAN ZG-303Z 3-in-1 (soil, temperature, air humidity) and the Tuya 2-in-1 probe <code>_TZE2841000000_tgrzpqf4</code> (soil, temperature).<br>
+      Soil moisture with a colour bar, temperature and air humidity in one row; tap a reading for its day / week / month trend.
+    </td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/cover-compact-card.png" alt="Cover compact card: a shutter bar with slats and a sun in the open part" width="380"></td>
+    <td>
+      <b><a href="#cover-compact-card">Cover Compact Card</a></b><br>
+      <b>Fits:</b> any Home Assistant cover that accepts a position — roller shutters (<i>tapparelle</i>), blinds, curtains; tuned for Tuya TS130F modules.<br>
+      One row instead of the tile card's two: drag the shutter-shaped bar to set the position, with a sun or moon in the open part.
+    </td>
+  </tr>
+</table>
+
+Each card finds its own entities from a single one, lists only compatible devices in its visual editor, and ships in the same bundle as the integration, which registers it as a Lovelace resource for you (storage-mode dashboards, the default).
+
+Home Assistant custom **integration** + three **Lovelace cards** for specific Tuya Zigbee devices and covers (ZHA / Zigbee2MQTT). The integration adds reliable server-side irrigation services; each supported device gets a compact dedicated card. Everything ZHA-specific (the device quirks, including the GiEX clock sync before every open, and the keep-alive) lives in the companion [zha-tuya-quirks](https://github.com/SimoneAvogadro/zha-tuya-quirks) integration — install both for a ZHA valve.
 
 ## Supported devices
 
@@ -22,7 +53,7 @@ Cards auto-discover their entities from a single primary entity, and a card for 
 
 | Component | Purpose | Status |
 |---|---|---|
-| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services (HA service **target**: listed in the automation editor's "by target" tab for every valve device) + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves (radio side in zha-tuya-quirks) | v2.16.0 |
+| `tuya_irrigation` integration | Server-side `irrigation_by_seconds` / `irrigation_by_liters` services (HA service **target**: listed in the automation editor's "by target" tab for every valve device) + irrigation-history & water-total sensors + keep-alive for weak-signal battery valves (radio side in zha-tuya-quirks) | v2.17.0 |
 | `irrigation-control-card` | Lovelace card driving the services above, with battery + Zigbee signal icon | v2.10.0 |
 | `soil-moisture-card` | Card for soil moisture + temperature (+ optional air humidity) sensors, with a tap-to-open trend panel (day / week / month) and a Zigbee signal icon | v1.7.0 |
 | `cover-compact-card` | One-row card for covers (tapparelle / shutters): name and state on the left, full-height position bar on the right, filled from the right edge and drawn as a shutter (slats + sun/moon); drag-only control and a live preview in the "by entity" card picker | v1.3.0 |

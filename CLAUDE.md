@@ -2,7 +2,7 @@
 
 ## What this project is
 
-A Home Assistant custom **integration** (`tuya_irrigation`) plus two companion **Lovelace cards**, targeting Tuya-based smart devices (ZHA / Zigbee2MQTT). Distributed as a single HACS custom repository (category: Integration — HACS auto-detects from `custom_components/`).
+A Home Assistant custom **integration** (`tuya_irrigation`) plus three companion **Lovelace cards**, targeting Tuya-based smart devices (ZHA / Zigbee2MQTT). Distributed as a single HACS custom repository (category: Integration — HACS auto-detects from `custom_components/`).
 
 The integration holds **no ZHA / zigpy code** (see [ZHA layer](#zha-layer-zha-tuya-quirks)). It provides two server-side services that reliably open + wait + close an irrigation valve (working around firmware bugs in e.g. GiEX QT06 / `_TZE200_a7sghmms` whose native duration timer is silently ignored under ZHA). It records a durable per-valve **irrigation history** (a run log + a cumulative water total) via new sensors and an `irrigation_completed` event, and auto-serves and auto-registers the Lovelace card bundle so users don't need to configure Lovelace resources manually.
 

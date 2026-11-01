@@ -841,13 +841,17 @@ console.info("%c COVER-COMPACT-CARD %c v1.3.0 ", "color:white;background:#a476e0
 /**
  * Irrigation Control Card for Home Assistant
  * Custom Lovelace card for Tuya-based smart irrigation valves (TS0601)
- * (unreleased) — Signal icon: when the suffix-derived `_lqi` / `_rssi` /
+ * v2.11.0 — Tapping the header icon or name (or Enter / Space on it) opens
+ *          HA's more-info dialog on the valve switch, like the core cards
+ *          (history, settings gear, breadcrumb to the device). The two changes
+ *          below shipped earlier without a card version of their own.
+ *   · Signal icon: when the suffix-derived `_lqi` / `_rssi` /
  *          `_linkquality` sensors do not exist, look them up on the primary
  *          entity's device via the entity registry (`hass.entities`), so a
  *          valve whose irrigation entities carry another prefix (SONOFF SWV
  *          via zha-sonoff-quirks: area-named entities, device-named ZHA
  *          diagnostics) or a renamed entity gets the icon too (sqResolve).
- * (unreleased) — Drop the "Manual" action button and its `manual_seconds`
+ *   · Drop the "Manual" action button and its `manual_seconds`
  *          option: it was only a shortcut for a fixed-length Time run. The
  *          action row keeps Liters + Time; an existing `manual_seconds:` in a
  *          dashboard config is ignored.
@@ -2092,7 +2096,7 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for Tuya irrigation valves with timer, scheduling and history";
   window.customCards.push({ type: "irrigation-control-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c IRRIGATION-CONTROL-CARD %c v2.10.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c IRRIGATION-CONTROL-CARD %c v2.11.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
 // --- sensor-trend-panel.js ---
 /**
  * Sensor Trend Panel for Home Assistant
@@ -2940,7 +2944,10 @@ function sqApply(wrap, info, hidden) {
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
- * (unreleased) — Signal icon: when the suffix-derived `_lqi` / `_rssi` /
+ * v1.8.0 — Tapping the header icon or name (or Enter / Space on it) opens
+ *          HA's more-info dialog on the soil-moisture sensor, like the core
+ *          cards. The change below shipped earlier without a version.
+ *   · Signal icon: when the suffix-derived `_lqi` / `_rssi` /
  *          `_linkquality` sensors do not exist, look them up on the probe's
  *          device via the entity registry (`hass.entities`), so a renamed
  *          entity or a probe with mixed prefixes gets the icon too (sqResolve).
@@ -3639,4 +3646,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for soil moisture, temperature and air humidity sensors";
   window.customCards.push({ type: "soil-moisture-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c SOIL-MOISTURE-CARD %c v1.7.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c SOIL-MOISTURE-CARD %c v1.8.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

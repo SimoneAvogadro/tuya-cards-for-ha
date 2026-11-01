@@ -1,7 +1,10 @@
 /**
  * Soil Moisture Card for Home Assistant
  * Custom Lovelace card for soil moisture / temperature / humidity sensors (ZG-303Z)
- * (unreleased) — Signal icon: when the suffix-derived `_lqi` / `_rssi` /
+ * v1.8.0 — Tapping the header icon or name (or Enter / Space on it) opens
+ *          HA's more-info dialog on the soil-moisture sensor, like the core
+ *          cards. The change below shipped earlier without a version.
+ *   · Signal icon: when the suffix-derived `_lqi` / `_rssi` /
  *          `_linkquality` sensors do not exist, look them up on the probe's
  *          device via the entity registry (`hass.entities`), so a renamed
  *          entity or a probe with mixed prefixes gets the icon too (sqResolve).
@@ -700,4 +703,4 @@ window.customCards = window.customCards || [];
   }[lang] || "Compact card for soil moisture, temperature and air humidity sensors";
   window.customCards.push({ type: "soil-moisture-card", name: pickerName, description: pickerDesc, preview: true });
 })();
-console.info("%c SOIL-MOISTURE-CARD %c v1.7.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");
+console.info("%c SOIL-MOISTURE-CARD %c v1.8.0 ", "color:white;background:#2ecc8b;font-weight:bold;padding:2px 6px;border-radius:4px 0 0 4px;", "color:#2ecc8b;background:#1a1c2e;font-weight:bold;padding:2px 6px;border-radius:0 4px 4px 0;");

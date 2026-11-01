@@ -472,7 +472,8 @@ class SoilMoistureCard extends HTMLElement {
 :host{--sm-green:#2ecc8b;--sm-yellow:#eab308;--sm-red:#e25555;--danger:#e25555;--tm:var(--primary-text-color,#e8e8f0);--ts:var(--secondary-text-color,#8b8da5);--th:var(--disabled-text-color,#5c5e76);--bd:var(--divider-color,rgba(255,255,255,.06))}
 ha-card{overflow:hidden}
 .ch{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 6px}
-.hl{display:flex;align-items:center;gap:10px}
+.hl{display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0;border-radius:8px}
+.hl:focus-visible{outline:2px solid var(--primary-color,#03a9f4);outline-offset:2px}
 .di{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background .3s}
 .di svg{transition:fill .3s}
 .tt{font-size:14px;font-weight:600;color:var(--tm)}
@@ -502,7 +503,7 @@ ${sqCss()}
 </style>
 <ha-card>
   <div class="ch">
-    <div class="hl">
+    <div class="hl" id="hl" role="button" tabindex="0">
       <div class="di" id="icon" style="background:${cc.dim}"><svg width="18" height="18" viewBox="0 0 24 24" fill="${cc.text}"><path d="M12 2.5S5 10 5 15a7 7 0 0014 0c0-5-7-12.5-7-12.5zm-1 15c-2.5-.3-4.5-2.3-4.7-4.8-.1-.4.2-.7.5-.7s.6.2.7.6c.2 1.9 1.7 3.4 3.6 3.6.4 0 .6.3.6.7s-.3.6-.7.6z"/></svg></div>
       <span class="tt">${name}</span>
     </div>
@@ -538,6 +539,16 @@ ${sqCss()}
   <div class="panel-wrap" id="panel-wrap" hidden></div>
 </ha-card>`;
     this._cacheEls();
+    // Icon + name open HA's more-info dialog on the soil-moisture sensor,
+    // like the standard cards (history, settings gear, breadcrumb to the device).
+    const hl = this.shadowRoot.getElementById("hl");
+    const moreInfo = () => this.dispatchEvent(new CustomEvent("hass-more-info", {
+      detail: { entityId: this._entities.soil_moisture }, bubbles: true, composed: true,
+    }));
+    hl.addEventListener("click", moreInfo);
+    hl.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); moreInfo(); }
+    });
     for (const [id, metric] of [["col-soil", "soil"], ["col-temp", "temperature"], ["col-hum", "humidity"]]) {
       const col = this.shadowRoot.getElementById(id);
       if (!col) continue;

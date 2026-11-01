@@ -872,7 +872,8 @@ class IrrigationControlCard extends HTMLElement {
 :host{--accent:#2ecc8b;--accent-dim:rgba(46,204,139,.12);--accent-hover:#27b67a;--blue:#4a90d9;--blue-dim:rgba(74,144,217,.12);--blue-text:#6aabf0;--danger:#e25555;--tm:var(--primary-text-color,#e8e8f0);--ts:var(--secondary-text-color,#8b8da5);--th:var(--disabled-text-color,#5c5e76);--bd:var(--divider-color,rgba(255,255,255,.06));--sep:var(--bd)}
 ha-card{overflow:hidden}
 .ch{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 6px}
-.hl{display:flex;align-items:center;gap:10px}
+.hl{display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0;border-radius:8px}
+.hl:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .di{width:32px;height:32px;border-radius:8px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center}
 .tt{font-size:15px;font-weight:600;color:var(--tm)}
 .hr{display:flex;align-items:center;gap:10px}
@@ -981,7 +982,7 @@ input[type=number]{-moz-appearance:textfield}
 </style>
 <ha-card>
   <div class="ch">
-    <div class="hl">
+    <div class="hl" id="hl" role="button" tabindex="0">
       <div class="di"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round"><path d="M12 2C12 2 5 9 5 14a7 7 0 0014 0c0-5-7-12-7-12z"/></svg></div>
       <span class="tt">${name}</span>
     </div>
@@ -1078,6 +1079,16 @@ input[type=number]{-moz-appearance:textfield}
 
   _bindEvents() {
     const el = this._el;
+    // Icon + name open HA's more-info dialog on the valve switch, like the
+    // standard cards (history, settings gear, breadcrumb to the device).
+    const hl = this.shadowRoot.getElementById("hl");
+    const moreInfo = () => this.dispatchEvent(new CustomEvent("hass-more-info", {
+      detail: { entityId: this._entities.switch }, bubbles: true, composed: true,
+    }));
+    hl?.addEventListener("click", moreInfo);
+    hl?.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); moreInfo(); }
+    });
     el.bl?.addEventListener("click", () => this._selectMode("litri"));
     el.bt?.addEventListener("click", () => this._selectMode("tempo"));
     el.gl?.addEventListener("click", () => { if (this._starting || this._stopping) return; if (this._isOn() && this._mode === "litri") this._stopLitri(); else this._startLitri(); });
